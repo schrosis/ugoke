@@ -19,6 +19,11 @@ fsl 5
 // MODEL-ATT-004: whether the run was started by workflow code of the same version, and whether
 //                --force is given, are given when the command is typed. A run that records no
 //                version is not of the same version.
+// MODEL-ATT-005: the server is chosen as for ugoke run (run-command.fsl). Without --address and
+//                temporal.address, a resident process that does not run or cannot be reached
+//                leaves no server to open, which is lose (REQ-ATT-010). A resident process of
+//                another version is not asked to run the steps, so workerRuns tells whether a
+//                process runs them still.
 requirements AttachCancel {
   enum Action { Attach, Cancel }
   enum Exit { Pending, Zero, One, Three, OneThirty }
