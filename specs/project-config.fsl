@@ -8,7 +8,9 @@ fsl 5
 //                reads it. A problem is YAML that cannot be parsed, an anchor or an alias, a key
 //                written twice, more than one document, an unknown field, an empty
 //                temporal.address, or a file that cannot be read. The messages say where the
-//                problem is, as for a workflow definition.
+//                problem is, as for a workflow definition. The fields are temporal.address and
+//                plugins, whose keys must be names of npm packages. The settings under them are
+//                checked when the plugins load (plugins.fsl).
 // MODEL-CFG-002: the commands that handle workflows read the file each time they run, such as
 //                ugoke validate, ugoke run, ugoke attach, ugoke cancel, ugoke docs, and ugoke inbox
 //                list, and so does the resident process each time a project asks it, so a change

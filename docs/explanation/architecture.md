@@ -33,7 +33,7 @@ ugoke は、ワークフローを [Temporal](https://temporal.io/) の Workflow 
 | Worker          | Temporal Server からタスクを取り、Workflow と Activity を実行します                                                               |
 | Workflow        | 定義の中間表現を解釈し、ステップを順に進めます。外の世界には触れません                                                            |
 | Activity        | スクリプトの実行、AI の呼び出し、待機など、外の世界に触れる処理です                                                               |
-| プラグイン      | AI のプロバイダーや待機の方法を足します。`.ugoke/config.yaml` の `plugins` に書きます                                              |
+| プラグイン      | AI のプロバイダーや待機の方法を足します。`.ugoke/config.yaml` の `plugins` に書きます（「[プラグイン](../reference/plugins.md)」）                                              |
 
 ### Temporal Server
 

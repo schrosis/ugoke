@@ -80,6 +80,7 @@ wait: detached. Run "ugoke attach --address localhost:7233" to continue
   - 定義に問題があった
   - `--input` が正しくない
   - [プロジェクトの設定](../config.md)に問題がある
+  - [プラグイン](../plugins.md)を読み込めない
   - サーバーの準備に失敗した。たとえば、常駐プロセスが動いていない
   - 暗号化の鍵が壊れている
 - `3`: ワークフローから切り離した。ワークフローは続いている

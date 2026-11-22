@@ -46,6 +46,8 @@ ugoke daemon status
 - `temporal.address` を変えると、新しいサーバーで Worker を動かします
 - 前のサーバーの Worker は、常駐プロセスが止まるまで、そのサーバーの実行を受け持ちます
 - 前に使ったサーバーに戻すと、そのサーバーの Worker をまた使います
+- `plugins` か、プラグインの設定を変えると、Worker を作り直します。`plugins` の順番を変えたときも同じです。前の Worker は、動いているステップが終わってから止まります。新しい Worker が始まらなければ、前の Worker が続けます
+- プラグインのパッケージを更新したときは、`ugoke daemon stop` と `ugoke daemon start` で、常駐プロセスを起動し直します。起動し直すまで、Worker は前のコードで動きます。設定を変えて Worker を作り直しても同じです
 - `ugoke daemon status` は、プロジェクトごとに、そのサーバーと前のサーバーも表示します
 
 ## 終了ステータス

@@ -27,7 +27,7 @@ No .ugoke directory found in /home/user/scratch or its parents
 
 ## プロジェクトの設定
 
-`.ugoke/config.yaml` に、プロジェクトの設定を書けます。たとえば、`temporal.address` で、プロジェクトの Temporal Server を指定できます。
+`.ugoke/config.yaml` に、プロジェクトの設定を書けます。たとえば、`temporal.address` で、プロジェクトの Temporal Server を指定できます。`plugins` で、ai ステップのプロバイダーなどを足す[プラグイン](../reference/plugins.md)を読み込めます。
 
 ```yaml
 temporal:
