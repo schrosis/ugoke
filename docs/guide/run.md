@@ -87,7 +87,14 @@ Select a run (1-1): 1
 
 ## あとで答える
 
-常駐プロセスが動かしている実行なら、戻らずに答えることもできます。`ugoke inbox list` で、答えを待っているステップと、答えるコマンドを一覧にします。
+常駐プロセスが動かしている実行なら、戻らずに答えることもできます。初めから追いかけないときは、`ugoke run --detach` で始めます。
+
+```console
+$ ugoke run deploy --detach
+deploy: started deploy-8f2c… in ugoke daemon. Its questions wait in "ugoke inbox list", and "ugoke attach deploy-8f2c…" follows it
+```
+
+`ugoke inbox list` で、答えを待っているステップと、答えるコマンドを一覧にします。
 
 ```console
 $ ugoke inbox list
