@@ -13,8 +13,9 @@ fsl 5
 //                --input, and its numbers arrive already parsed.
 // MODEL-INP-005: badOptions means that the options of a choice are empty, contain an empty string,
 //                or repeat a value.
-// MODEL-INP-006: multiline of a string input is accepted, and changes nothing for --input. It
-//                changes how the terminal wait method asks for a value (terminal-prompt.fsl).
+// MODEL-INP-006: an input comes as JSON, so it has no multiline, which is an unknown field there
+//                (workflow-definition.fsl). A string with newlines is accepted as it is. multiline
+//                belongs to the answers of a wait step (terminal-prompt.fsl).
 requirements WorkflowInput {
   enum Source { NoSource, Given, Default, Null }
   actor Author, User, Ugoke
