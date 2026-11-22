@@ -2,6 +2,8 @@ import { terminalWaitMethod } from "@ugoke/adapter-wait-terminal";
 import { definePlugin, defineWaitMethod } from "@ugoke/core";
 import type { InputDeclaration, Plugin, WorkflowEvent } from "@ugoke/core";
 
+import { cancelledExitCode } from "./exit-codes.js";
+
 /**
  * Output of `--from-ai`, which a program such as an AI agent reads instead of a person.
  *
@@ -50,7 +52,8 @@ export const writeAiLine = (stdout: (text: string) => void, line: AiLine): void 
 
 /**
  * Runs a command of `--from-ai`, and ends its output with a `failed` line when it fails without
- * writing any line, such as when a definition is invalid.
+ * writing any line, such as when a definition is invalid. An interrupt before any line, such as
+ * while the command connects, ends it with a `cancelled` line instead.
  *
  * The messages for a person still go to standard error, and the line repeats them.
  *
@@ -73,7 +76,9 @@ export const reportAiFailure = async <Context extends CommandOutput>(
       context.stdout(text);
     },
   });
-  if (exitCode !== 0 && !wrote) {
+  if (exitCode === cancelledExitCode && !wrote) {
+    writeAiLine(context.stdout, { type: "cancelled" });
+  } else if (exitCode !== 0 && !wrote) {
     writeAiLine(context.stdout, { message: errors.trim() || "The command failed", type: "failed" });
   }
   return exitCode;

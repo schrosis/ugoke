@@ -13,6 +13,7 @@ import type { AiLine } from "./ai.js";
 import type { CommandContext } from "./commands/load.js";
 import { loadEncryptionKey } from "./encryption.js";
 import { createEnvironmentReader } from "./environment.js";
+import { cancelledExitCode, detachedExitCode } from "./exit-codes.js";
 import { createLineReader } from "./lines.js";
 import type { LineReader } from "./lines.js";
 import { readProjectConfig } from "./config.js";
@@ -21,16 +22,6 @@ import { createProgressPrinter } from "./progress.js";
 import type { ProgressPrinter } from "./progress.js";
 import type { OpenedServer } from "./server.js";
 import { projectLogDirectory } from "./state.js";
-
-/** Exit code of a run that was cancelled, following the shell convention for SIGINT. */
-export const cancelledExitCode = 130;
-
-/**
- * Exit code of a run that was left running, which a process can attach to later.
- *
- * It is not zero, so that a script that runs ugoke does not take the run as completed.
- */
-export const detachedExitCode = 3;
 
 /** Returns whether an error of the engine means that the run was cancelled. */
 export const isCancelled = (error: unknown): boolean =>
