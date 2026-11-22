@@ -7,17 +7,18 @@ fsl 5
 // MODEL-COE-001: one failure of a script or an AI step is modeled. The kind of the step, why it
 //                failed, and whether it has continueOnError are given when it fails. Exited is a
 //                script that ended with a status other than 0, or an AI that failed, such as one
-//                that finished without the structured result of a schema, or whose provider
-//                refused the evaluated with. TimedOut is a step past its timeout. NotRun is a step
-//                that could not start, such as when the dotenv file cannot be read. TooLargeOut is
+//                that finished without the structured result of a schema, or whose provider refused
+//                the evaluated with. TimedOut is a step past its timeout. NotRun is a step that
+//                could not start, such as when the dotenv file cannot be read. TooLargeOut is
 //                outputs over 512 KiB. BadExpression is an expression that cannot be evaluated in
 //                run, prompt, env, with, outputs, or a condition, such as a field of result.data
-//                that the result of the AI does not have. A condition that references env and
-//                cannot read the environment, such as when the dotenv file cannot be read, is
-//                BadExpression too, even when the script of the step went on without the file.
-//                TooLargeIn is received values over
-//                512 KiB, which the workflow checks before the step starts. A Worker without an AI
-//                runner, which the CLI never has, stops the workflow like BadExpression.
+//                that properties of the schema does not declare and the result of the AI does not
+//                have (ai-step.fsl, REQ-AIS-007). A condition that references env and cannot read
+//                the environment, such as when the dotenv file cannot be read, is BadExpression
+//                too, even when the script of the step went on without the file. TooLargeIn is
+//                received values over 512 KiB, which the workflow checks before the step starts. A
+//                Worker without an AI runner, which the CLI never has, stops the workflow like
+//                BadExpression.
 // MODEL-COE-002: for the workflow, a step that continues ends like one that succeeded, and goes to
 //                its next step (workflow-run.fsl, interpret-workflow.fsl). The progress marks the
 //                failed step as continued (step-progress.fsl).
@@ -25,8 +26,8 @@ fsl 5
 //                continueOnError (step-references.fsl, REQ-REF-012).
 // MODEL-COE-004: a failed AI step that continues returns no session, so the session of the step
 //                stays the one of its last visit that returned one. With session: reuse, its next
-//                visit continues that session, or starts a new one when there is none
-//                (ai-step.fsl, REQ-AIS-004).
+//                visit continues that session, or starts a new one when there is none (ai-step.fsl,
+//                REQ-AIS-004).
 requirements ContinueOnError {
   enum Kind { ScriptStep, AiStep }
   enum Cause { Exited, TimedOut, NotRun, TooLargeOut, BadExpression, TooLargeIn, Interrupted }
