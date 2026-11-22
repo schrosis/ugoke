@@ -35,3 +35,4 @@ ugoke docs [options] [workflow]
   - 作れなかった文書がある
   - プロジェクトが見つからなかった
   - [プロジェクトの設定](../config.md)に問題がある
+  - [プラグイン](../plugins.md)を読み込めない

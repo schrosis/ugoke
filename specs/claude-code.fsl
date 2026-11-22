@@ -22,6 +22,9 @@ fsl 5
 //                subagent wrote it, and whether its first line is longer than 200 characters are
 //                given when it arrives. The text of a tool is its name and the first of command,
 //                file_path, path, pattern, url, query, and description that it has.
+// MODEL-CCD-005: the provider comes from the plugin @ugoke/adapter-ai-claude-code, which a project
+//                names in plugins of .ugoke/config.yaml. Without it, provider: claude-code is an
+//                error of the definition that tells which package to install (plugins.fsl).
 requirements ClaudeCode {
   enum Block { TextBlock, ToolBlock, OtherBlock }
   actor Author, Ugoke, Claude

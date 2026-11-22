@@ -132,7 +132,7 @@ steps:
 
 ## AI に任せる
 
-`type: ai` のステップは、`prompt` の指示を AI に実行させます。`provider: claude-code` は、Claude Code で実行します。
+`type: ai` のステップは、`prompt` の指示を AI に実行させます。`provider: claude-code` は、Claude Code で実行します。使うには、プロジェクトの設定の `plugins` に、`@ugoke/adapter-ai-claude-code` を書きます（「[claude-code](../reference/providers/claude-code.md#使う準備)」）。
 
 ```yaml
 version: v0.1

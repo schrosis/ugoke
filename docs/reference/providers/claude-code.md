@@ -2,6 +2,19 @@
 
 [ai ステップ](../workflow-definition.md#ai-ステップ)を、Claude Code で実行するプロバイダーです。`provider: claude-code` と書いて使います。
 
+## 使う準備
+
+`@ugoke/adapter-ai-claude-code` のパッケージをプロジェクトに置き、[プロジェクトの設定](../config.md)の `plugins` に書きます。ugoke の隣にあれば、プロジェクトに置かなくても使えます（「[プラグイン](../plugins.md)」）。
+
+```yaml
+plugins:
+  "@ugoke/adapter-ai-claude-code":
+```
+
+書かないと、`provider: claude-code` は定義のエラーになります。
+
+## 例
+
 ```yaml
 review:
   type: ai

@@ -24,6 +24,11 @@ fsl 5
 //                of a project on a server. Addresses are compared as written, so localhost:7233 and
 //                127.0.0.1:7233 get a Worker each. A configuration file with a problem refuses the
 //                request, which the command reads first and fails on (project-config.fsl).
+// MODEL-DPJ-007: replug is a request after plugins, their order, or the settings of a plugin
+//                changed, while a Worker of the project runs on the server. The old Worker stops
+//                after the steps that it runs finish, which oldStops tells, only after the new one
+//                started. Two Workers on the same task queue share its tasks until then
+//                (plugins.fsl).
 requirements DaemonProjects {
   actor User, Daemon
 
@@ -36,11 +41,14 @@ requirements DaemonProjects {
     restarting: Bool = false
     commandFails: Bool = false
     previousKept: Bool = false
+    oldStops: Bool = false
     lifecycle Unknown -> Asked -> Registered -> Stopping -> Stopped
     lifecycle Asked -> Refused
     lifecycle Registered -> Asked
     lifecycle Registered -> Moved
     lifecycle Moved -> Registered
+    lifecycle Registered -> Replugging
+    lifecycle Replugging -> Registered
     lifecycle Stopped -> Asked
     lifecycle Stopping -> Stopping
     lifecycle Asked -> Dropped
@@ -56,6 +64,11 @@ requirements DaemonProjects {
     set restarting = false, previousKept = previousKept or serving
     covers REQ-DPJ-005 "temporal.address を変えると、新しいサーバーで Worker を動かす。前のサーバーの Worker は、常駐プロセスが止まるまで、そのサーバーの実行を受け持つ"
   event serveMoved = Daemon serves Project with serving, commandFails (Moved -> Registered)
+  event replug = User replugs Project with workerStarts (Registered -> Replugging)
+    set restarting = false
+    covers REQ-DPJ-006 "plugins か、プラグインの設定を変えると、Worker を作り直す。前の Worker は、動いているステップが終わってから止まる。新しい Worker が始まらなければ、前の Worker が続ける"
+  event reload = Daemon reloads Project with commandFails (Replugging -> Registered)
+    set serving = true, oldStops = workerStarts
   event refuse = Daemon refuses Project (Asked -> Refused)
   event register = Daemon registers Project with serving, commandFails (Asked -> Registered)
     set listed = true
@@ -81,6 +94,10 @@ requirements DaemonProjects {
   rule REQ-DPJ-005 "temporal.address を変えると、新しいサーバーで Worker を動かす。前のサーバーの Worker は、常駐プロセスが止まるまで、そのサーバーの実行を受け持つ" {
     allow Daemon serves Project only when input serving == workerStarts and input commandFails == not workerStarts
     StoppedKeepsNothing: always Project in Stopped has not previousKept
+  }
+  rule REQ-DPJ-006 "plugins か、プラグインの設定を変えると、Worker を作り直す。前の Worker は、動いているステップが終わってから止まる。新しい Worker が始まらなければ、前の Worker が続ける" {
+    allow User replugs Project only when serving
+    allow Daemon reloads Project only when input commandFails == not workerStarts
   }
   rule REQ-DPJ-003 "常駐プロセスを起動し直すと、覚えていたプロジェクトを戻す。.ugoke がなくなったプロジェクトは外す" {
     allow User restores Project only when listed
@@ -165,6 +182,27 @@ requirements DaemonProjects {
     Daemon registers p1 with serving true, commandFails false
     User moves p1 with workerStarts false
     Daemon serves p1 with serving true, commandFails true
+    then rejected
+  }
+  scenario AC-DPJ-009 "プラグインを変えると、新しい Worker で動かし、前の Worker を止める" {
+    User asks p1 with hasUgoke true, workerStarts true
+    Daemon registers p1 with serving true, commandFails false
+    User replugs p1 with workerStarts true
+    Daemon reloads p1 with commandFails false
+    then stage(p1) == Registered and p1.serving and p1.oldStops
+  }
+  scenario AC-DPJ-010 "新しいプラグインで Worker が始まらなければ、前の Worker が続け、コマンドは 1 で終わる" {
+    User asks p1 with hasUgoke true, workerStarts true
+    Daemon registers p1 with serving true, commandFails false
+    User replugs p1 with workerStarts false
+    Daemon reloads p1 with commandFails true
+    then stage(p1) == Registered and p1.serving and not p1.oldStops
+  }
+  forbidden FB-DPJ-012 "新しい Worker が始まらなかったのに、コマンドを成功にしない" {
+    User asks p1 with hasUgoke true, workerStarts true
+    Daemon registers p1 with serving true, commandFails false
+    User replugs p1 with workerStarts false
+    Daemon reloads p1 with commandFails false
     then rejected
   }
   forbidden FB-DPJ-001 ".ugoke のないプロジェクトを、登録しない" {
