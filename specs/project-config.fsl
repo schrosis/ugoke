@@ -20,6 +20,8 @@ fsl 5
 //                (REQ-CMD-010) and daemon-projects.fsl use.
 // MODEL-CFG-004: $schema at the top of the file names a JSON Schema for editors. It is accepted
 //                and changes nothing (schema-command.fsl).
+// MODEL-CFG-005: output.showCommands of the file tells whether the progress quotes the run of a
+//                script step and the prompt of an AI step (progress-display.fsl).
 requirements ProjectConfig {
   enum Exit { Pending, Zero, One }
   actor User, Ugoke
