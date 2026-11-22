@@ -1,7 +1,7 @@
 fsl 5
 // Requirements for the functions of ${{ }} expressions, which a template and the condition of a
 // branch can call. trim is the only function.
-// Source: docs/reference/workflow-definition.md ("式", "関数", "分岐")
+// Source: docs/reference/workflow-definition.md ("式", "ヘルパー関数", "分岐")
 //
 // MODEL-FUN-001: one call is modeled. Whether it names a function that exists, whether it has
 //                the number of arguments that the function takes, whether it has references in
@@ -53,7 +53,7 @@ requirements ExpressionFunctions {
   def checks(k: Bool, a: Bool, r: Bool, s: Bool) = k and a and (r or s)
 
   event write = Author writes Call with known, arityOk, hasReferences, stringArgument (Unwritten -> Written)
-    covers REQ-FUN-001 "${{ }} の式と分岐の if では、関数を呼べる。今ある関数は trim だけ"
+    covers REQ-FUN-001 "${{ }} の式と分岐の if では、ヘルパー関数を呼べる。今あるヘルパー関数は trim だけ"
   event accept = Ugoke accepts Call (Written -> Checked)
   event reject = Ugoke rejects Call (Written -> Invalid)
   event evaluate = Ugoke evaluates Call (Checked -> Evaluated)
@@ -62,11 +62,11 @@ requirements ExpressionFunctions {
     covers REQ-FUN-004 "trim は、文字列の前後の空白と改行を取り除く。文字列でない値を渡すと、null でも、ステップは失敗する"
 
   event draft = Author drafts Template with referenceOrCall, operatorUsed (Blank -> Drafted)
-    covers REQ-FUN-005 "テンプレートの ${{ }} に書けるのは、参照 1 つか、関数の呼び出し 1 つ。値だけと、演算子は、定義のエラー"
+    covers REQ-FUN-005 "テンプレートの ${{ }} に書けるのは、参照 1 つか、ヘルパー関数の呼び出し 1 つ。値だけと、演算子は、定義のエラー"
   event take = Ugoke takes Template (Drafted -> Accepted)
   event refuse = Ugoke refuses Template (Drafted -> Rejected)
 
-  rule REQ-FUN-002 "ない関数と、引数の数が違う呼び出しは、定義のエラー" {
+  rule REQ-FUN-002 "ないヘルパー関数と、引数の数が違う呼び出しは、定義のエラー" {
     allow Ugoke accepts Call only when checks(known, arityOk, hasReferences, stringArgument)
     allow Ugoke rejects Call only when not checks(known, arityOk, hasReferences, stringArgument)
   }
@@ -77,7 +77,7 @@ requirements ExpressionFunctions {
     allow Ugoke evaluates Call only when stringArgument
     allow Ugoke fails Call only when not stringArgument
   }
-  rule REQ-FUN-005 "テンプレートの ${{ }} に書けるのは、参照 1 つか、関数の呼び出し 1 つ。値だけと、演算子は、定義のエラー" {
+  rule REQ-FUN-005 "テンプレートの ${{ }} に書けるのは、参照 1 つか、ヘルパー関数の呼び出し 1 つ。値だけと、演算子は、定義のエラー" {
     allow Ugoke takes Template only when referenceOrCall and not operatorUsed
     allow Ugoke refuses Template only when not referenceOrCall or operatorUsed
   }
@@ -99,7 +99,7 @@ requirements ExpressionFunctions {
     Ugoke rejects c1
     then c1 is Invalid
   }
-  scenario AC-FUN-004 "ない関数は、定義のエラー" {
+  scenario AC-FUN-004 "ないヘルパー関数は、定義のエラー" {
     Author writes c1 with known false, arityOk true, hasReferences true, stringArgument true
     Ugoke rejects c1
     then c1 is Invalid
@@ -120,7 +120,7 @@ requirements ExpressionFunctions {
     then t1 is Rejected
   }
 
-  forbidden FB-FUN-001 "ない関数を、受け付けない" {
+  forbidden FB-FUN-001 "ないヘルパー関数を、受け付けない" {
     Author writes c1 with known false, arityOk true, hasReferences true, stringArgument true
     Ugoke accepts c1
     then rejected
