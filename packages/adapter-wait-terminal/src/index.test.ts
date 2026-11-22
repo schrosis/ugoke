@@ -1,11 +1,8 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { validateWithSchema } from "@ugoke/core";
 import type { InputDeclaration } from "@ugoke/core";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createTerminalPlugin,
@@ -15,6 +12,7 @@ import {
   terminalWaitMethod,
 } from "./index.ts";
 import type { TerminalIO, TerminalPluginOptions } from "./index.ts";
+import { kittyKeys } from "./keyboard.ts";
 
 describe("terminalWaitMethod", () => {
   it("is provided by the terminal plugin", () => {
@@ -236,19 +234,43 @@ describe("createTerminalPlugin with line input", () => {
 });
 
 /** Keys that the interactive tests press. */
-const keys = { ctrlC: "\u0003", down: "\u001B[B", enter: "\r" };
+const keys = {
+  altEnter: "\u001B\r",
+  backspace: "\u007F",
+  ctrlC: "\u0003",
+  down: "\u001B[B",
+  enter: "\r",
+  pasteEnd: "\u001B[201~",
+  pasteStart: "\u001B[200~",
+};
 
-/** A terminal for the interactive prompts, which a test types in. */
-const createInteractiveTerminal = () => {
-  const input = new PassThrough();
+/**
+ * A terminal for the interactive prompts, which a test types in.
+ *
+ * @param kitty Whether the terminal answers the query of the kitty keyboard protocol. Without it,
+ *   the terminal is not a TTY, so the prompts do not ask it.
+ */
+const createInteractiveTerminal = ({ kitty }: { kitty?: boolean } = {}) => {
+  const input = Object.assign(new PassThrough(), {
+    isTTY: kitty !== undefined,
+    setRawMode: () => {},
+  });
   // The output of a terminal is never ended, which the test checks after every prompt.
   const output = new PassThrough();
   output.on("finish", () => {
     throw new Error("The prompt ended the output of the terminal");
   });
   let screen = "";
+  // Everything that the terminal received, which tells the sequences that the prompts sent.
+  let received = "";
   output.on("data", (chunk: Buffer) => {
     screen += chunk.toString();
+    received += chunk.toString();
+    // A terminal answers the flags of the kitty keyboard protocol only when it has it, and the
+    // attributes always.
+    if (chunk.toString().includes("\u001B[?u\u001B[c")) {
+      input.write(kitty === true ? "\u001B[?0u\u001B[?62;22c" : "\u001B[?62;22c");
+    }
   });
   const interrupted = new AbortController();
   const io: TerminalIO = {
@@ -266,7 +288,13 @@ const createInteractiveTerminal = () => {
       input.write(key);
     }
   };
-  return { interrupted: interrupted.signal, io, press, screen: () => screen };
+  return {
+    interrupted: interrupted.signal,
+    io,
+    press,
+    received: () => received,
+    screen: () => screen,
+  };
 };
 
 const respondInteractively = async (
@@ -412,41 +440,100 @@ describe("createTerminalPlugin with interactive prompts", () => {
     expect(interrupted.aborted).toBe(true);
   });
 
-  describe("with an editor", () => {
-    let directory: string;
-
-    beforeEach(async () => {
-      directory = await mkdtemp(join(tmpdir(), "ugoke-editor-"));
-    });
-
-    afterEach(async () => {
-      vi.unstubAllEnvs();
-      await rm(directory, { force: true, recursive: true });
-    });
-
-    /** Uses an editor that replaces the file with the text and records what the file had. */
-    const stubEditor = async (text: string) => {
-      const script = join(directory, "editor.sh");
-      await writeFile(
-        script,
-        `#!/bin/sh\ncat "$1" > "${join(directory, "before.txt")}"\nprintf '%s' '${text}' > "$1"\n`,
-      );
-      await chmod(script, 0o755);
-      vi.stubEnv("VISUAL", script);
+  describe("with a multiline answer", () => {
+    const multiline = {
+      message: "Describe",
+      schema: { body: { multiline: true, type: "string" } },
     };
 
-    it("asks for a multiline answer in the editor, filled with the default", async () => {
-      await stubEditor("Fix the login.\n\nAdd tests.\n\n");
+    it("starts a new line with \\ then Enter, and with Alt+Enter, and submits with Enter", async () => {
+      const { io, press } = createInteractiveTerminal();
+      const answered = respondInteractively(io, multiline);
+
+      await press("body", "first\\", keys.enter);
+      await press("first", "second", keys.altEnter, "third", keys.enter);
+
+      await expect(answered).resolves.toEqual({ body: "first\nsecond\nthird" });
+    });
+
+    it("tells how to start a new line, without Shift+Enter in a terminal that sends it as Enter", async () => {
+      const { io, press, received } = createInteractiveTerminal({ kitty: false });
+      const answered = respondInteractively(io, multiline);
+
+      await press("Alt+Enter, or \\ then Enter", "done", keys.enter);
+
+      await expect(answered).resolves.toEqual({ body: "done" });
+      expect(received()).not.toContain("Shift+Enter");
+      expect(received()).not.toContain("\u001B[>1u");
+    });
+
+    it("starts a new line with Shift+Enter while the kitty keyboard protocol is on", async () => {
+      const { io, press, received } = createInteractiveTerminal({ kitty: true });
+      const answered = respondInteractively(io, multiline);
+
+      await press("Shift+Enter", "first", kittyKeys.shiftEnter, "second", kittyKeys.altEnter);
+      await press("second", "third", keys.enter);
+
+      await expect(answered).resolves.toEqual({ body: "first\nsecond\nthird" });
+      // The protocol is on only while the prompt asks.
+      expect(received().indexOf("\u001B[>1u")).toBeGreaterThan(-1);
+      expect(received().indexOf("\u001B[<u")).toBeGreaterThan(received().indexOf("\u001B[>1u"));
+    });
+
+    it("interrupts the command on Ctrl+C of the kitty keyboard protocol", async () => {
+      const { interrupted, io, press, received } = createInteractiveTerminal({ kitty: true });
+      const controller = new AbortController();
+      interrupted.addEventListener("abort", () => controller.abort(new Error("Detached")));
+      const answered = respondInteractively(io, multiline, controller.signal);
+
+      await press("body", kittyKeys.ctrlC);
+
+      await expect(answered).rejects.toThrow("Detached");
+      expect(received()).toContain("\u001B[<u");
+    });
+
+    it("keeps the newlines of pasted text", async () => {
+      const { io, press } = createInteractiveTerminal();
+      const answered = respondInteractively(io, multiline);
+
+      await press("body", keys.pasteStart, "a\nb", keys.pasteEnd, keys.enter);
+
+      await expect(answered).resolves.toEqual({ body: "a\nb" });
+    });
+
+    it("joins a line with the line before on Backspace at its start", async () => {
+      const { io, press } = createInteractiveTerminal();
+      const answered = respondInteractively(io, multiline);
+
+      await press("body", "ab", keys.altEnter);
+      await press("ab", keys.backspace, "c", keys.enter);
+
+      await expect(answered).resolves.toEqual({ body: "abc" });
+    });
+
+    it("uses the default for an empty answer", async () => {
       const { io, press } = createInteractiveTerminal();
       const answered = respondInteractively(io, {
-        message: "Describe the change",
-        schema: { prompt: { default: "Fix", multiline: true, type: "string" } },
+        message: "Describe",
+        schema: { body: { default: "Fix", multiline: true, type: "string" } },
       });
 
-      await press("prompt", keys.enter);
+      await press("Fix", keys.enter);
 
-      await expect(answered).resolves.toEqual({ prompt: "Fix the login.\n\nAdd tests." });
-      await expect(readFile(join(directory, "before.txt"), "utf8")).resolves.toBe("Fix");
+      await expect(answered).resolves.toEqual({ body: "Fix" });
+    });
+
+    it("asks again for an empty required answer", async () => {
+      const { io, press } = createInteractiveTerminal();
+      const answered = respondInteractively(io, {
+        message: "Describe",
+        schema: { body: { multiline: true, required: true, type: "string" } },
+      });
+
+      await press("body", keys.enter);
+      await press("A value is required", "done", keys.enter);
+
+      await expect(answered).resolves.toEqual({ body: "done" });
     });
   });
 });

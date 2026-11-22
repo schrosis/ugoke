@@ -9,10 +9,12 @@ import {
 } from "@ugoke/core";
 import type { InputDeclaration, WaitMethod, WaitResponseContext } from "@ugoke/core";
 import confirm from "@inquirer/confirm";
-import editor from "@inquirer/editor";
 import input from "@inquirer/input";
 import select from "@inquirer/select";
 import { z } from "zod";
+
+import { enableKittyKeyboard, supportsKittyKeyboard } from "./keyboard.js";
+import { multilinePrompt } from "./multiline.js";
 
 /** Options of the `terminal` wait method, as the `with` field of a step writes them. */
 const optionsSchema = z.strictObject({
@@ -207,9 +209,6 @@ const askLineByLine = async (
 /** Value of the choice that leaves an optional answer not given. */
 const skip: unique symbol = Symbol("skip");
 
-/** Removes the newlines that an editor adds at the end of a file. */
-const trimTrailingNewlines = (text: string): string => text.replace(/(?:\r?\n)+$/u, "");
-
 /** Streams and the signal of a single prompt. */
 interface PromptContext {
   input: NodeJS.ReadableStream;
@@ -217,12 +216,45 @@ interface PromptContext {
   signal: AbortSignal;
 }
 
+/**
+ * Asks for an answer that can span lines in the terminal itself.
+ *
+ * Shift+Enter starts a new line only in a terminal with the kitty keyboard protocol, which is on
+ * only while the prompt asks.
+ */
+const askMultiline = async (
+  message: string,
+  declaration: Extract<InputDeclaration, { type: "string" }>,
+  streams: TerminalStreams,
+  context: PromptContext,
+  validate: (text: string) => string | true,
+): Promise<string> => {
+  const shiftEnter = await supportsKittyKeyboard(streams.input, streams.output);
+  const disable = shiftEnter ? enableKittyKeyboard(streams.output) : () => {};
+  try {
+    return await multilinePrompt(
+      {
+        default: declaration.default,
+        interrupt: streams.interrupt,
+        message,
+        shiftEnter,
+        validate,
+      },
+      context,
+    );
+  } finally {
+    disable();
+  }
+};
+
 /** Asks for the answer of a declaration with an interactive prompt. */
 const askInteractively = async (
   name: string,
   declaration: InputDeclaration,
-  context: PromptContext,
+  streams: TerminalStreams,
+  signal: AbortSignal,
 ): Promise<boolean | number | string | undefined> => {
+  const context = createPromptContext(streams, signal);
   const message =
     declaration.description === undefined ? name : `${name} ${declaration.description}`;
   const parse = (text: string): boolean | number | string | undefined => {
@@ -259,16 +291,8 @@ const askInteractively = async (
     // Without a default, Enter alone would answer yes, so the answer is typed instead.
     return confirm({ default: declaration.default, message }, context);
   }
-  if (isMultiline(declaration)) {
-    const text = await editor(
-      {
-        default: declaration.default === undefined ? undefined : String(declaration.default),
-        message,
-        validate: (value) => validate(trimTrailingNewlines(value)),
-      },
-      context,
-    );
-    return parse(trimTrailingNewlines(text));
+  if (declaration.type === "string" && declaration.multiline === true) {
+    return parse(await askMultiline(message, declaration, streams, context, validate));
   }
   const kind = declaration.type === "boolean" ? "y/n" : declaration.type;
   const text = await input(
@@ -325,19 +349,23 @@ const askWithPrompts = async (
     }
     const values: Record<string, unknown> = {};
     for (const [name, declaration] of entries) {
-      const value = await askInteractively(name, declaration, createPromptContext(streams, signal));
+      const value = await askInteractively(name, declaration, streams, signal);
       if (value !== undefined) {
         values[name] = value;
       }
     }
     return values;
   } catch (error) {
-    if (!isExitPrompt(error)) {
-      throw error;
+    if (isExitPrompt(error)) {
+      // The command decides what Ctrl+C does, such as detaching the run, and aborts the signal.
+      streams.interrupt();
+      return untilAborted(signal);
     }
-    // The command decides what Ctrl+C does, such as detaching the run, and aborts the signal.
-    streams.interrupt();
-    return untilAborted(signal);
+    // A prompt that the interrupt of the command aborted ends with the reason of the signal.
+    if (signal.aborted) {
+      return untilAborted(signal);
+    }
+    throw error;
   }
 };
 

@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@inquirer/confirm": "catalog:",
-    "@inquirer/editor": "catalog:",
+    "@inquirer/core": "catalog:",
     "@inquirer/input": "catalog:",
     "@inquirer/select": "catalog:",
     "@ugoke/core": "workspace:*",
