@@ -2,7 +2,7 @@ fsl 5
 // Requirements for ugoke attach and ugoke cancel: how they select a run of the project, and how
 // they end.
 // Source: docs/reference/commands/attach.md, docs/reference/commands/cancel.md,
-//         docs/guide/run.md ("実行に戻る、取り消す")
+//         docs/guide/run.md ("実行に戻る", "取り消す")
 //
 // MODEL-ATT-001: whether an ID is given, whether a running run of the project has it, whether
 //                the project has running runs, whether a run is selected in the terminal, whether

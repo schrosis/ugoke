@@ -4,17 +4,18 @@ ugoke のコマンドとファイルの形式を、項目ごとに引けるよ�
 
 ## コマンド
 
-| コマンド                                 | 内容                                         |
-| ---------------------------------------- | -------------------------------------------- |
-| [`ugoke`](commands/ugoke.md)             | 全体のオプションと終了ステータス             |
-| [`ugoke init`](commands/init.md)         | プロジェクトを作る                           |
-| [`ugoke run`](commands/run.md)           | ワークフローを実行する                       |
-| [`ugoke validate`](commands/validate.md) | ワークフローの定義を検証する                 |
-| [`ugoke docs`](commands/docs.md)         | ワークフローのつながりを図にした文書を作る   |
-| [`ugoke schema`](commands/schema.md)     | エディターのための JSON Schema を作る        |
-| [`ugoke attach`](commands/attach.md)     | 実行に戻って追いかける                       |
-| [`ugoke cancel`](commands/cancel.md)     | 実行を取り消す                               |
-| [`ugoke daemon`](commands/daemon.md)     | 常駐プロセスを起動、停止し、状態を表示する   |
+| コマンド                                 | 内容                                       |
+| ---------------------------------------- | ------------------------------------------ |
+| [`ugoke`](commands/ugoke.md)             | 全体のオプションと終了ステータス           |
+| [`ugoke init`](commands/init.md)         | プロジェクトを作る                         |
+| [`ugoke run`](commands/run.md)           | ワークフローを実行する                     |
+| [`ugoke validate`](commands/validate.md) | ワークフローの定義を検証する               |
+| [`ugoke docs`](commands/docs.md)         | ワークフローのつながりを図にした文書を作る |
+| [`ugoke schema`](commands/schema.md)     | エディターのための JSON Schema を作る      |
+| [`ugoke attach`](commands/attach.md)     | 実行に戻って追いかける                     |
+| [`ugoke cancel`](commands/cancel.md)     | 実行を取り消す                             |
+| [`ugoke inbox`](commands/inbox.md)       | 答えを待っているステップを一覧にして答える |
+| [`ugoke daemon`](commands/daemon.md)     | 常駐プロセスを起動、停止し、状態を表示する |
 
 ## ファイルの形式
 
