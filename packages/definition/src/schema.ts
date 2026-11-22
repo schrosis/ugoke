@@ -6,10 +6,10 @@ import {
   envNamePattern,
   identifierPattern,
   identifierSource,
-  workflowInputDeclarationDefinitionSchema,
   isJsonObject,
   jsonSchemaTarget,
   toJsonSchema,
+  workflowInputDeclarationDefinitionSchema,
 } from "@ugoke/core";
 import type { JsonObject, PluginRegistry, WaitMethod } from "@ugoke/core";
 import { z } from "zod";

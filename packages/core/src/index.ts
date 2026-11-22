@@ -6,11 +6,11 @@ export {
   inputDeclarationDefinitionSchema,
   inputDeclarationSchema,
   inputDeclarationsSchema,
-  workflowInputDeclarationDefinitionSchema,
   intermediateSchema,
   intermediateVersion,
   resolveWorkflowInput,
   validateIntermediate,
+  workflowInputDeclarationDefinitionSchema,
 } from "./intermediate/index.js";
 export type {
   AiStep,
