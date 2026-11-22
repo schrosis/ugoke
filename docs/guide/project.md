@@ -7,6 +7,7 @@ ugoke のファイルは、プロジェクトのルートの `.ugoke` ディレ�
 ```text
 my-project/                 プロジェクトのルート
 ├── .ugoke/
+│   ├── config.yaml         プロジェクトの設定（なくてもよい）
 │   └── workflows/          ワークフローの定義と、ugoke docs の文書
 │       ├── deploy.yaml     ワークフロー deploy
 │       └── release/
@@ -23,6 +24,17 @@ ugoke は、コマンドを実行したディレクトリから上へたどり�
 ```text
 No .ugoke directory found in /home/user/scratch or its parents
 ```
+
+## プロジェクトの設定
+
+`.ugoke/config.yaml` に、プロジェクトの設定を書けます。たとえば、`temporal.address` で、プロジェクトの Temporal Server を指定できます。
+
+```yaml
+temporal:
+  address: temporal.example.com:7233
+```
+
+項目と決まりは、リファレンスの「[プロジェクトの設定](../reference/config.md)」にあります。
 
 ## ワークフローの名前とファイル
 

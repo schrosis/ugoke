@@ -28,7 +28,8 @@ fsl 5
 //                line and never shortened, and only ", <, and > are written as entities.
 // MODEL-DOC-003: without a name, the workflows are taken in order of their names, and a project
 //                without .ugoke/workflows has none, which ends with 0. A directory outside of a
-//                project ends with 1.
+//                project ends with 1, and so does a problem in the configuration file of the
+//                project (project-config.fsl), before any document is written.
 requirements DocsCommand {
   enum Existing { NoFile, Generated, Foreign }
   enum Exit { Pending, Zero, One }

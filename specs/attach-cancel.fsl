@@ -23,7 +23,8 @@ fsl 5
 //                temporal.address, a resident process that does not run or cannot be reached
 //                leaves no server to open, which is lose (REQ-ATT-010). A resident process of
 //                another version is not asked to run the steps, so workerRuns tells whether a
-//                process runs them still.
+//                process runs them still. A problem in the configuration file of the project
+//                (project-config.fsl) is lose too.
 requirements AttachCancel {
   enum Action { Attach, Cancel }
   enum Exit { Pending, Zero, One, Three, OneThirty }
