@@ -36,7 +36,8 @@ requirements WorkerWait {
     lifecycle Pending -> Waiting -> Answered
     lifecycle Waiting -> Waiting
     lifecycle Waiting -> Failed
-    lifecycle Waiting -> Cancelled
+    lifecycle Waiting -> Cancelling -> Cancelled
+    lifecycle Cancelling -> Cancelling
   }
 
   event start = Worker starts Wait (Pending -> Waiting)
@@ -48,8 +49,12 @@ requirements WorkerWait {
   event stop = Worker stops Wait (Waiting -> Waiting)
     set askedAgain = true
     covers REQ-WWT-004 "Worker が止まると、待ち方を止める。次の Worker が、もう一度聞く"
-  event cancel = User cancels Wait (Waiting -> Cancelled)
+  event cancel = User cancels Wait (Waiting -> Cancelling)
+    covers REQ-WWT-005 "取り消すと、待ち方を止めてから、取り消しで終わる"
+  event stopMethod = Worker stopsMethod Wait (Cancelling -> Cancelling)
     set methodStopped = true
+    covers REQ-WWT-005 "取り消すと、待ち方を止めてから、取り消しで終わる"
+  event endCancel = Worker endsCancel Wait (Cancelling -> Cancelled)
     covers REQ-WWT-005 "取り消すと、待ち方を止めてから、取り消しで終わる"
 
   rule REQ-WWT-002 "外からの答えは、受け付けない。答えられるのは、定義が書いた待ち方だけ" {
@@ -60,6 +65,7 @@ requirements WorkerWait {
     allow Worker refuses Wait only when not input outside and (not input fits or input tooLarge)
   }
   rule REQ-WWT-005 "取り消すと、待ち方を止めてから、取り消しで終わる" {
+    allow Worker endsCancel Wait only when methodStopped
     CancelStopsMethod: always Wait in Cancelled has methodStopped
   }
 
@@ -87,6 +93,8 @@ requirements WorkerWait {
   scenario AC-WWT-005 "取り消すと、待ち方を止めて終わる" {
     Worker starts w1
     User cancels w1
+    Worker stopsMethod w1
+    Worker endsCancel w1
     then stage(w1) == Cancelled and w1.methodStopped
   }
 
@@ -108,6 +116,12 @@ requirements WorkerWait {
   forbidden FB-WWT-004 "外からの答えで、ステップを失敗にしない" {
     Worker starts w1
     Worker refuses w1 with outside true, fits false, tooLarge false
+    then rejected
+  }
+  forbidden FB-WWT-005 "待ち方を止める前に、取り消しで終わらない" {
+    Worker starts w1
+    User cancels w1
+    Worker endsCancel w1
     then rejected
   }
 }

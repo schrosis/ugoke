@@ -53,7 +53,7 @@ Worker は、次のどちらかで動きます。
 
 コマンドの中で動くのは、常駐プロセスがステップを動かさないときです（「[使う Temporal Server](../reference/commands/run.md#使う-temporal-server)」）。
 
-待ち方によっては、wait ステップに Worker が答えます。そのときは、追いかけるプロセスがなくても、ワークフローが進みます。Worker が止まると、次の Worker が聞き直します。
+待ち方によっては、wait ステップに Worker が答えます。常駐プロセスの Worker なら、追いかけるプロセスがなくても、ワークフローが進みます。Worker が止まると、次の Worker が聞き直します。
 
 `ugoke run` の Ctrl+C の動き（「[ugoke run](../reference/commands/run.md#ctrlc)」）が、どこでステップを実行しているかで変わるのは、このためです。常駐プロセスの Worker がステップを実行しているときは、コマンドが離れても、ワークフローは続きます。
 
