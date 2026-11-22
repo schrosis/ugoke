@@ -6,20 +6,20 @@ export const temporalCliManifest: TemporalCliManifest = {
   version: "1.10.1",
   assets: {
     "darwin-arm64": {
-      file: "temporal_cli_1.10.0_darwin_arm64.tar.gz",
-      sha256: "40a76ef7d525e6195b083e4cd50b184cc3bb242fea7f8dda2b9a8698ecbb7379",
+      file: "temporal_cli_1.10.1_darwin_arm64.tar.gz",
+      sha256: "94f7f982b26438e8abbde6000ba471b694be6a2413b31f6162f87a9f9c48c738",
     },
     "darwin-x64": {
-      file: "temporal_cli_1.10.0_darwin_amd64.tar.gz",
-      sha256: "150603ba135dc5f40f0a8f33b1a09732469692fae9a78e3024318e83f023136a",
+      file: "temporal_cli_1.10.1_darwin_amd64.tar.gz",
+      sha256: "8ec6c513ad2177de4eb15d2cb17a4fe5070e6078afd7f80bdfcc37fae459d3c4",
     },
     "linux-arm64": {
-      file: "temporal_cli_1.10.0_linux_arm64.tar.gz",
-      sha256: "6e526d2f089bf5acead2129f1f63e303b848410d5d9d86b9255359dcea6eaaa8",
+      file: "temporal_cli_1.10.1_linux_arm64.tar.gz",
+      sha256: "2f748e9411b37c9cabb57f1f08e37765388c12b5534432c7aea28b593df9145d",
     },
     "linux-x64": {
-      file: "temporal_cli_1.10.0_linux_amd64.tar.gz",
-      sha256: "521f461f3d108902763bb71e85cd0fd382dc9357b59604ae03da6ae734d16890",
+      file: "temporal_cli_1.10.1_linux_amd64.tar.gz",
+      sha256: "4c1500e2ce2d4de136e5fe8852d9b7f82eb62f19b6b383b3e0c040519a9d20b1",
     },
   },
 };
