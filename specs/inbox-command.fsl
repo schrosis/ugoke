@@ -11,13 +11,16 @@ fsl 5
 //                the run started, the input of the workflow, the message quoted with "│ ", the
 //                declared answers, and the command that answers it: ugoke inbox answer for a run
 //                that the resident process runs, and ugoke attach otherwise. A run that cannot be
-//                read is reported on standard error with the command that attaches to it. The
+//                read is reported on standard error with the command that attaches to it. With
+//                --address, the resident process runs no run for the command, as for ugoke run
+//                (run-command.fsl, MODEL-CMD-001), so every question shows ugoke attach. The
 //                questions of the most recent runs come first. One run that cannot be read ends the
 //                command with 1, even when it shows other questions or none.
 // MODEL-INB-002: one answer of ugoke inbox answer is modeled. Whether the run is a running run of
-//                the project, whether the resident process runs it, whether --values could be read,
-//                whether the values fit the declared answers, and whether the step waits at the
-//                visit are given when it is typed. --values is a JSON object or the path of a .json
+//                the project, whether the resident process runs it (never with --address, as in
+//                MODEL-INB-001), whether --values could be read, whether the values fit the
+//                declared answers, and whether the step waits at the visit are given when it is
+//                typed. --values is a JSON object or the path of a .json
 //                file, as --input is (input-option.fsl). Without --visit, the step that waits now
 //                is answered. The run checks the answer, so a rejected answer leaves the step
 //                waiting. --detach is required, and the command exits after the answer.
