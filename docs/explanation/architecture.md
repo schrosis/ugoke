@@ -49,7 +49,9 @@ ugoke は、ワークフローを [Temporal](https://temporal.io/) の Workflow 
 Worker は、次のどちらかで動きます。
 
 - 常駐プロセスの中。登録したプロジェクトごとに 1 つ動き、コマンドが終わってもステップを進めます
-- コマンドの中。常駐プロセスがそのプロジェクトのステップを実行しないときに、`ugoke run` などが一時的に Worker を動かします。コマンドが終わると、Worker も止まります
+- コマンドの中。`ugoke run` などが一時的に動かします。コマンドが終わると止まります
+
+コマンドの中で動くのは、常駐プロセスがステップを動かさないときです（「[使う Temporal Server](../reference/commands/run.md#使う-temporal-server)」）。
 
 `ugoke run` の Ctrl+C の動き（「[ugoke run](../reference/commands/run.md#ctrlc)」）が、どこでステップを実行しているかで変わるのは、このためです。常駐プロセスの Worker がステップを実行しているときは、コマンドが離れても、ワークフローは続きます。
 
