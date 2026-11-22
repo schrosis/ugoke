@@ -15,6 +15,7 @@ ugoke のコマンドとファイルの形式を、項目ごとに引けるよ�
 | [`ugoke attach`](commands/attach.md)     | 実行に戻って追いかける                     |
 | [`ugoke cancel`](commands/cancel.md)     | 実行を取り消す                             |
 | [`ugoke inbox`](commands/inbox.md)       | 答えを待っているステップを一覧にして答える |
+| [`ugoke log`](commands/log.md)           | 実行の進み具合を表示する                   |
 | [`ugoke daemon`](commands/daemon.md)     | 常駐プロセスを起動、停止し、状態を表示する |
 
 ## ファイルの形式
