@@ -5,6 +5,9 @@ fsl 5
 //
 // MODEL-CLI-001: a command that is known and has all its arguments runs, and its own exit status
 //                is described with that command (run-command.fsl, validate-command.fsl).
+// MODEL-CLI-002: the help lists the commands in groups: Getting started (init and help), Run
+//                workflows, Write workflows, and Background. ugoke help <command> shows the help of
+//                a command, and ends with 1 for an unknown command.
 requirements CliEntry {
   enum Given { NoCommand, HelpOption, VersionOption, KnownCommand, UnknownCommand }
   enum Exit { Running, Zero, One }
