@@ -9,7 +9,9 @@ fsl 5
 //                standard output is a terminal, and NO_COLOR and FORCE_COLOR are given when the
 //                step starts. A terminal follows NO_COLOR, FORCE_COLOR, and the colors that it
 //                supports, and a pipe or a file gets colors only with FORCE_COLOR, as Node reads
-//                them. Each stream is colored on its own.
+//                them. FORCE_COLOR comes first: a value that asks for colors is ForceOn, even with
+//                NO_COLOR, and 0 is ForceOff, even in a terminal. Each stream is colored on its
+//                own.
 // MODEL-DSP-002: the quoted lines start with "│ > ", in the color of the step, and other lines of a
 //                step start with "│ ". A prompt over five lines ends with "… (<n> more lines)".
 //                The colors of the steps follow the order of the definition, without red and
@@ -26,6 +28,7 @@ fsl 5
 //                step is shortened with … to fit the width.
 requirements ProgressDisplay {
   enum Kind { ScriptStep, AiStep, WaitStep }
+  enum Force { Unset, ForceOn, ForceOff }
   actor Worker
 
   entity StepStart {
@@ -34,7 +37,7 @@ requirements ProgressDisplay {
     hideCommands: Bool = false
     terminal: Bool = false
     noColor: Bool = false
-    forceColor: Bool = false
+    forceColor: Force = Unset
     commandQuoted: Bool = false
     messageQuoted: Bool = false
     truncated: Bool = false
@@ -43,7 +46,7 @@ requirements ProgressDisplay {
     lifecycle Pending -> Shown
   }
 
-  def colorsOn(t: Bool, n: Bool, f: Bool) = if t then not n else f
+  def colorsOn(t: Bool, n: Bool, f: Force) = if f == ForceOn then true else (if f == ForceOff then false else (t and not n))
   def quotesCommand(k: Kind, h: Bool) = if k == WaitStep then false else not h
   def quotesMessage(k: Kind) = if k == WaitStep then true else false
   def cuts(k: Kind, h: Bool, l: Bool) = if k == AiStep then (not h and l) else false
@@ -64,7 +67,7 @@ requirements ProgressDisplay {
   rule REQ-DSP-003 "prompt は 5 行まで出し、残りの行の数を出す" {
     PromptCut: always StepStart in Shown has truncated == cuts(kind, hideCommands, longPrompt)
   }
-  rule REQ-DSP-004 "標準出力がターミナルのときは、ステップごとに色を変える。NO_COLOR で消せて、FORCE_COLOR でパイプやファイルにも付く" {
+  rule REQ-DSP-004 "標準出力がターミナルのときは、ステップごとに色を変える。NO_COLOR で消せて、FORCE_COLOR でパイプやファイルにも付く。FORCE_COLOR は NO_COLOR より先に効き、0 なら色を付けない" {
     ColorRule: always StepStart in Shown has colored == colorsOn(terminal, noColor, forceColor)
   }
   rule REQ-DSP-005 "標準出力がターミナルのときは、script や ai のステップが動いているあいだ、いちばん下に、ステップの名前と経った時間の行を出す。wait ステップが聞いているあいだは出さない" {
@@ -72,27 +75,35 @@ requirements ProgressDisplay {
   }
 
   scenario AC-DSP-001 "script ステップの run を引用する" {
-    Worker shows s1 with kind ScriptStep, longPrompt false, hideCommands false, terminal false, noColor false, forceColor false
+    Worker shows s1 with kind ScriptStep, longPrompt false, hideCommands false, terminal false, noColor false, forceColor Unset
     then s1.commandQuoted and not s1.colored and not s1.statusLine
   }
   scenario AC-DSP-002 "showCommands が false なら、prompt を出さない" {
-    Worker shows s1 with kind AiStep, longPrompt true, hideCommands true, terminal true, noColor false, forceColor false
+    Worker shows s1 with kind AiStep, longPrompt true, hideCommands true, terminal true, noColor false, forceColor Unset
     then not s1.commandQuoted and not s1.truncated and s1.colored and s1.statusLine
   }
   scenario AC-DSP-003 "長い prompt は、5 行で切る" {
-    Worker shows s1 with kind AiStep, longPrompt true, hideCommands false, terminal false, noColor false, forceColor false
+    Worker shows s1 with kind AiStep, longPrompt true, hideCommands false, terminal false, noColor false, forceColor Unset
     then s1.commandQuoted and s1.truncated
   }
   scenario AC-DSP-004 "wait ステップの message は、showCommands が false でも出し、状態の行は出さない" {
-    Worker shows s1 with kind WaitStep, longPrompt false, hideCommands true, terminal true, noColor false, forceColor false
+    Worker shows s1 with kind WaitStep, longPrompt false, hideCommands true, terminal true, noColor false, forceColor Unset
     then s1.messageQuoted and not s1.commandQuoted and not s1.statusLine
   }
   scenario AC-DSP-005 "NO_COLOR なら、ターミナルでも色を付けない" {
-    Worker shows s1 with kind ScriptStep, longPrompt false, hideCommands false, terminal true, noColor true, forceColor false
+    Worker shows s1 with kind ScriptStep, longPrompt false, hideCommands false, terminal true, noColor true, forceColor Unset
     then not s1.colored and s1.statusLine
   }
+  scenario AC-DSP-007 "FORCE_COLOR は NO_COLOR より先に効く" {
+    Worker shows s1 with kind ScriptStep, longPrompt false, hideCommands false, terminal true, noColor true, forceColor ForceOn
+    then s1.colored
+  }
+  scenario AC-DSP-008 "FORCE_COLOR=0 なら、ターミナルでも色を付けない" {
+    Worker shows s1 with kind ScriptStep, longPrompt false, hideCommands false, terminal true, noColor false, forceColor ForceOff
+    then not s1.colored
+  }
   scenario AC-DSP-006 "FORCE_COLOR なら、パイプにも色を付ける" {
-    Worker shows s1 with kind ScriptStep, longPrompt false, hideCommands false, terminal false, noColor false, forceColor true
+    Worker shows s1 with kind ScriptStep, longPrompt false, hideCommands false, terminal false, noColor false, forceColor ForceOn
     then s1.colored and not s1.statusLine
   }
 }
