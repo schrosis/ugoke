@@ -22,18 +22,20 @@ fsl 5
 //                subagent wrote it, and whether its first line is longer than 200 characters are
 //                given when it arrives. The text of a tool is its name and the first of command,
 //                file_path, path, pattern, url, query, and description that it has.
-// MODEL-CCD-006: whether with names an agent, and whether Claude Code knows it, are given when the
-//                step starts. Claude Code tells the agents that it knows in its first message, and
-//                runs its default agent without an error when it does not know the named one, so
-//                the provider stops it and fails the step. A first message without the agents is
-//                taken as not knowing the agent. The agent is named again when a session is
-//                continued (session: reuse). With an agent, the step uses the system
-//                prompt of Claude Code, so that the prompt of the agent applies, and the model of
-//                the agent takes precedence over model of the step. The tools of the agent still
-//                need allowedTools or the settings (REQ-CCD-003).
 // MODEL-CCD-005: the provider comes from the plugin @ugoke/adapter-ai-claude-code, which a project
 //                names in plugins of .ugoke/config.yaml. Without it, provider: claude-code is an
 //                error of the definition that tells which package to install (plugins.fsl).
+// MODEL-CCD-006: whether with names an agent, and whether Claude Code knows it, are given when the
+//                step starts. Claude Code reads the agents from where it reads its settings, such
+//                as ~/.claude/agents and .claude/agents of the project, because the provider does
+//                not limit the sources of the settings. It tells the agents that it knows in its
+//                first message, and runs its default agent without an error when it does not know
+//                the named one, so the provider stops it and fails the step. A first message
+//                without the agents is taken as not knowing the agent. The agent is named again
+//                when a session is continued (session: reuse). With an agent, the step uses the
+//                system prompt of Claude Code, so that the prompt of the agent applies, and a model
+//                that the agent names takes precedence over model of the step. The tools of the
+//                agent still need allowedTools or the settings (REQ-CCD-003).
 requirements ClaudeCode {
   enum Block { TextBlock, ToolBlock, OtherBlock }
   actor Author, Ugoke, Claude
@@ -207,14 +209,14 @@ requirements ClaudeCode {
     Ugoke skips b1
     then rejected
   }
-  scenario AC-CCD-009 "Claude Code が知っているエージェントで動かす" {
+  scenario AC-CCD-007 "Claude Code が知っているエージェントで動かす" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
     Claude starts s1 with agentNamed true, agentKnown true
     Claude finishes s1 with succeeded true, hasResult true
     then s1 is Done
   }
-  scenario AC-CCD-010 "Claude Code が知らないエージェントは、ステップの失敗" {
+  scenario AC-CCD-008 "Claude Code が知らないエージェントは、ステップの失敗" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
     Ugoke misses s1 with agentNamed true, agentKnown false
