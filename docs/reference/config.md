@@ -11,8 +11,8 @@ temporal:
 
 | 項目               | 必須   | 内容                                                                                                       |
 | ------------------ | ------ | ---------------------------------------------------------------------------------------------------------- |
-| `temporal.address` | いいえ | プロジェクトの Temporal Server のアドレスです。書かなければ、常駐プロセスのサーバーを使います |
 | `$schema`          | いいえ | エディターが使う JSON Schema のパスです。ugoke の動きは変えません。[ugoke schema](commands/schema.md)を見てください |
+| `temporal.address` | いいえ | プロジェクトの Temporal Server のアドレスです。書かなければ、常駐プロセスのサーバーを使います |
 | `plugins`          | いいえ | 読み込むプラグインです。パッケージの名前と、その設定の組で書きます。[プラグイン](plugins.md)を見てください |
 
 使う Temporal Server の決め方は、「[ugoke run](commands/run.md#使う-temporal-server)」にあります。
