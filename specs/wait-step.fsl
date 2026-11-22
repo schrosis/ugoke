@@ -10,6 +10,8 @@ fsl 5
 //                when it is answered. An answer that does not fit is asked again.
 // MODEL-WAI-003: a step without schema asks for no value and waits for Enter, which is an answer
 //                that always fits. A wait has no time limit, so no event ends it by time.
+// MODEL-WAI-004: how the terminal method asks for each value, with interactive prompts or line by
+//                line, is in terminal-prompt.fsl.
 requirements WaitStep {
   enum Source { NoSource, Given, Default, Null }
   actor Author, Worker, User

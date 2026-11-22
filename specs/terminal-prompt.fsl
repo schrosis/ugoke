@@ -1,0 +1,133 @@
+fsl 5
+// Requirements for how the terminal wait method asks for a value: with interactive prompts in a
+// terminal, and line by line otherwise.
+// Source: docs/reference/workflow-definition.md ("terminal")
+//
+// MODEL-TPR-001: one value is asked. Its kind, whether it is required, whether it has a default,
+//                whether standard input and output are both terminals, and whether the terminal
+//                has the kitty keyboard protocol are given when the step asks. Whether an answer
+//                fits the declaration is in wait-step.fsl.
+// MODEL-TPR-002: one key of a multiline value is modeled when it is pressed in a terminal. Enter
+//                submits, and Alt+Enter, Enter after a \ at the end of the line, Shift+Enter with
+//                the kitty keyboard protocol, and Enter inside pasted text start a new line.
+//                Backspace at the start of a line joins it with the line before. A terminal without
+//                the protocol sends Shift+Enter as Enter, which then submits. A \ at the end of a
+//                line always starts a new line, so a line cannot end with \ in a terminal, while a
+//                line read from a pipe can.
+// MODEL-TPR-003: before a multiline value, the method asks the terminal for the flags of the kitty
+//                keyboard protocol and then for its attributes, and waits up to a second. The
+//                answers are read as data, and keys typed meanwhile go back to the input. The
+//                protocol, when the terminal has it, and bracketed paste are on only while the
+//                value is asked, and are turned off when it is answered, on Ctrl+C, and when the
+//                process exits. The protocol sends Ctrl+C as a sequence, which interrupts the
+//                command as Ctrl+C does elsewhere. Under the input, a line tells the keys that
+//                start a new line in that terminal.
+// MODEL-TPR-004: a line read from a pipe answers a value, and a multiline value ends with a line of
+//                ".". A prompt of a line shows the kind, such as (y/n, required).
+requirements TerminalPrompt {
+  enum Kind { TextValue, MultilineValue, NumberValue, BooleanValue, ChoiceValue }
+  enum Way { NoWay, Typed, Listed, Confirmed, Lines, LineByLine }
+  enum Key { EnterKey, AltEnter, BackslashEnter, ShiftEnter, PastedEnter }
+  actor Worker, User
+
+  entity Question {
+    kind: Kind = TextValue
+    required: Bool = false
+    hasDefault: Bool = false
+    terminal: Bool = false
+    way: Way = NoWay
+    canSkip: Bool = false
+    lifecycle Pending -> Asked
+  }
+
+  entity MultilineKey {
+    key: Key = EnterKey
+    kitty: Bool = false
+    submits: Bool = false
+    breaksLine: Bool = false
+    lifecycle Up -> Pressed
+  }
+
+  def wayOf(k: Kind, d: Bool, t: Bool) =
+    if not t then LineByLine
+    else if k == ChoiceValue then Listed
+    else if k == BooleanValue and d then Confirmed
+    else if k == MultilineValue then Lines
+    else Typed
+  def skippable(k: Kind, r: Bool, d: Bool, t: Bool) = if t and k == ChoiceValue then (not r and not d) else false
+  def submitting(k: Key, kitty: Bool) = if k == EnterKey then true else (if k == ShiftEnter then not kitty else false)
+  def breaking(k: Key, kitty: Bool) = if k == EnterKey then false else (if k == ShiftEnter then kitty else true)
+
+  event ask = Worker asks Question with kind, required, hasDefault, terminal (Pending -> Asked)
+    set way = wayOf(input kind, input hasDefault, input terminal),
+      canSkip = skippable(input kind, input required, input hasDefault, input terminal)
+    covers REQ-TPR-001 "標準入力と標準出力がどちらもターミナルなら、選ぶ形で聞く。パイプなどのときは、1 行ずつ読む"
+  event press = User presses MultilineKey with key, kitty (Up -> Pressed)
+    set submits = submitting(input key, input kitty), breaksLine = breaking(input key, input kitty)
+    covers REQ-TPR-004 "multiline の値は、その場で複数行を入力する。Enter で確定し、Alt+Enter か、行の終わりの \\ のあとに Enter で改行する。kitty keyboard protocol に対応したターミナルでは、Shift+Enter でも改行する。貼り付けた文の改行は残る"
+
+  rule REQ-TPR-002 "choice は、一覧から選ぶ。必須でなく default もなければ、答えないことも選べる" {
+    ListChoice: always Question in Asked has (way == Listed) == (terminal and kind == ChoiceValue)
+    SkipOptional: always Question in Asked has canSkip == skippable(kind, required, hasDefault, terminal)
+  }
+  rule REQ-TPR-003 "default のある boolean は、y か n で確かめる。ほかの値は、入力したあとに確かめる" {
+    ConfirmBoolean: always Question in Asked has (way == Confirmed) == (terminal and kind == BooleanValue and hasDefault)
+    WayFollowsKind: always Question in Asked has way == wayOf(kind, hasDefault, terminal)
+  }
+  rule REQ-TPR-004 "multiline の値は、その場で複数行を入力する。Enter で確定し、Alt+Enter か、行の終わりの \\ のあとに Enter で改行する。kitty keyboard protocol に対応したターミナルでは、Shift+Enter でも改行する。貼り付けた文の改行は残る" {
+    KeysOfLines: always MultilineKey in Pressed has submits == submitting(key, kitty) and breaksLine == breaking(key, kitty)
+  }
+
+  scenario AC-TPR-001 "ターミナルでは、choice を一覧から選び、答えないことも選べる" {
+    Worker asks q1 with kind ChoiceValue, required false, hasDefault false, terminal true
+    then q1.way == Listed and q1.canSkip
+  }
+  scenario AC-TPR-002 "必須の choice は、答えないことを選べない" {
+    Worker asks q1 with kind ChoiceValue, required true, hasDefault false, terminal true
+    then q1.way == Listed and not q1.canSkip
+  }
+  scenario AC-TPR-012 "default のある choice は、答えないことを選べない" {
+    Worker asks q1 with kind ChoiceValue, required false, hasDefault true, terminal true
+    then q1.way == Listed and not q1.canSkip
+  }
+  scenario AC-TPR-003 "default のある boolean は、y か n で確かめる" {
+    Worker asks q1 with kind BooleanValue, required false, hasDefault true, terminal true
+    then q1.way == Confirmed
+  }
+  scenario AC-TPR-004 "default のない boolean は、入力する" {
+    Worker asks q1 with kind BooleanValue, required true, hasDefault false, terminal true
+    then q1.way == Typed
+  }
+  scenario AC-TPR-005 "ターミナルでは、multiline を複数行で入力する" {
+    Worker asks q1 with kind MultilineValue, required false, hasDefault false, terminal true
+    then q1.way == Lines
+  }
+  scenario AC-TPR-006 "パイプでは、1 行ずつ読む" {
+    Worker asks q1 with kind ChoiceValue, required false, hasDefault false, terminal false
+    then q1.way == LineByLine and not q1.canSkip
+  }
+  scenario AC-TPR-007 "Enter で確定する" {
+    User presses k1 with key EnterKey, kitty true
+    then k1.submits and not k1.breaksLine
+  }
+  scenario AC-TPR-008 "Alt+Enter と、\\ のあとの Enter で改行する" {
+    User presses k1 with key AltEnter, kitty false
+    then k1.breaksLine and not k1.submits
+  }
+  scenario AC-TPR-009 "kitty keyboard protocol のあるターミナルでは、Shift+Enter で改行する" {
+    User presses k1 with key ShiftEnter, kitty true
+    then k1.breaksLine
+  }
+  scenario AC-TPR-010 "kitty keyboard protocol のないターミナルでは、Shift+Enter は Enter として届き、確定する" {
+    User presses k1 with key ShiftEnter, kitty false
+    then k1.submits and not k1.breaksLine
+  }
+  scenario AC-TPR-011 "貼り付けた文の改行は、確定しない" {
+    User presses k1 with key PastedEnter, kitty false
+    then k1.breaksLine and not k1.submits
+  }
+}
+verify {
+  instances Question = 1
+  instances MultilineKey = 1
+}
