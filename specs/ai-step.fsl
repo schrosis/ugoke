@@ -3,23 +3,31 @@ fsl 5
 // session that a step that runs again continues, and how the step ends.
 // Source: docs/reference/workflow-definition.md ("ai ステップ")
 //
-// MODEL-AIS-001: whether a plugin provides the provider that the step names, whether with keeps
-//                the rules of the provider, whether a schema, when the step has one, has type:
-//                object, and session are given when the definition is written.
-//                The references of prompt, with, env, and outputs are described in
-//                step-references.fsl and ai-result.fsl.
-// MODEL-AIS-002: one visit of the step is modeled. Whether an earlier visit of the step in the
-//                same run left a session, and whether with still keeps the rules after its
-//                expressions are evaluated, are given when the step is about to run. A Worker
-//                that does not know the provider fails the step in the same way.
+// MODEL-AIS-001: whether a plugin provides the provider that the step names, whether with keeps the
+//                rules of the provider, whether a schema, when the step has one, has type: object,
+//                and session are given when the definition is written. The references of prompt,
+//                with, env, and outputs are described in step-references.fsl and ai-result.fsl.
+// MODEL-AIS-002: one visit of the step is modeled. Whether an earlier visit of the step in the same
+//                run left a session, and whether with still keeps the rules after its expressions
+//                are evaluated, are given when the step is about to run. A Worker that does not
+//                know the provider fails the step in the same way.
 // MODEL-AIS-003: the provider runs the step. What it says and does is shown as the output of the
-//                step, and the end of the step, a failure, or the timeout, come from the
-//                provider. Only the declared outputs enter the history of the run. Whether the
-//                result has every field after result.data that the outputs reference is given
-//                when the step ends. A reference that goes through null, such as result.data.a.b
-//                where a is null, reads as null. A step with continueOnError that fails has
-//                result.data null, whose fields read as null, so REQ-AIS-007 does not apply to it
-//                (continue-on-error.fsl).
+//                step, and the end of the step, a failure, or the timeout, come from the provider.
+//                Only the declared outputs enter the history of the run. Whether every field after
+//                result.data that the outputs and the branches reference can be read is given when
+//                the step ends (fieldsReadable). A field that properties of the schema declares,
+//                also in a nested object, reads as null when the result does not have it, so it can
+//                always be read; properties are followed only through objects, not through the
+//                items of arrays, nor through $ref or other keywords. A field that properties does
+//                not declare, which validation allows for such schemas as one with
+//                additionalProperties, cannot be read when the result does not have it. The result
+//                that the provider returned is not changed: the fields that it has are kept, also
+//                those that the schema does not declare, and so are those whose value is null. A
+//                field named __proto__, which the result has or which is filled with null, is an
+//                own field, and does not change the prototype of the value. A reference that goes
+//                through null, such as result.data.a.b where a is null, reads as null. A step with
+//                continueOnError that fails has result.data null, whose fields read as null, so
+//                REQ-AIS-007 does not apply to it (continue-on-error.fsl).
 requirements AiStep {
   enum Session { Reuse, New }
   actor Author, Ugoke, Worker, Provider, Clock
@@ -31,7 +39,7 @@ requirements AiStep {
     mode: Session = Reuse
     withStillOk: Bool = false
     hasSession: Bool = false
-    dataHasFields: Bool = false
+    fieldsReadable: Bool = false
     continued: Bool = false
     timedOut: Bool = false
     lifecycle Unwritten -> Written -> Accepted -> Prepared -> Started -> Succeeded
@@ -52,14 +60,14 @@ requirements AiStep {
     covers REQ-AIS-001 "ai ステップは、プラグインが足すプロバイダーで、prompt の指示を AI に実行させる"
   event refuse = Worker refuses AiRun (Prepared -> Failed)
   event start = Worker starts AiRun with continued (Prepared -> Started)
-  event finish = Provider finishes AiRun with dataHasFields (Started -> Succeeded)
+  event finish = Provider finishes AiRun with fieldsReadable (Started -> Succeeded)
     covers REQ-AIS-001 "ai ステップは、プラグインが足すプロバイダーで、prompt の指示を AI に実行させる"
   event withhold = Worker withholds AiRun (Prepared -> Cancelled)
     covers REQ-AIS-006 "実行を取り消すと、動いている AI を止め、まだ始めていなければ始めずに、ステップは取り消しで終わる"
   event cancel = Worker cancels AiRun (Started -> Cancelled)
     covers REQ-AIS-006 "実行を取り消すと、動いている AI を止め、まだ始めていなければ始めずに、ステップは取り消しで終わる"
-  event miss = Worker misses AiRun with dataHasFields (Started -> Failed)
-    covers REQ-AIS-007 "outputs が参照した result.data の項目が AI の結果になければ、AI を動かしたあとにステップは失敗する"
+  event miss = Worker misses AiRun with fieldsReadable (Started -> Failed)
+    covers REQ-AIS-007 "schema の properties に書いた項目が AI の結果になければ null と読む。properties にない名前の項目と、配列の要素の中の項目が結果になければ、参照したときに、AI を動かしたあとにステップは失敗する"
   fault event fail = Provider fails AiRun (Started -> Failed)
     covers REQ-AIS-005 "失敗した ai ステップは、やり直さない。timeout を過ぎると、失敗する"
   fault event expire = Clock expires AiRun (Started -> Failed)
@@ -88,19 +96,27 @@ requirements AiStep {
     SucceededInTime: always AiRun in Succeeded has not timedOut
   }
 
-  rule REQ-AIS-007 "outputs が参照した result.data の項目が AI の結果になければ、AI を動かしたあとにステップは失敗する" {
-    allow Provider finishes AiRun only when input dataHasFields
-    allow Worker misses AiRun only when not input dataHasFields
-    SucceededHasFields: always AiRun in Succeeded has dataHasFields
+  rule REQ-AIS-007 "schema の properties に書いた項目が AI の結果になければ null と読む。properties にない名前の項目と、配列の要素の中の項目が結果になければ、参照したときに、AI を動かしたあとにステップは失敗する" {
+    allow Provider finishes AiRun only when input fieldsReadable
+    allow Worker misses AiRun only when not input fieldsReadable
+    SucceededHasFields: always AiRun in Succeeded has fieldsReadable
   }
 
-  scenario AC-AIS-008 "outputs が参照した項目が結果になければ、失敗する" {
+  scenario AC-AIS-008 "properties にない、参照した項目が結果になければ、失敗する" {
     Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
     Ugoke accepts a1
     Worker prepares a1 with withStillOk true, hasSession false
     Worker starts a1 with continued false
-    Worker misses a1 with dataHasFields false
+    Worker misses a1 with fieldsReadable false
     then a1 is Failed
+  }
+  scenario AC-AIS-010 "properties に書いた項目は、結果になくても null と読み、成功する" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker starts a1 with continued false
+    Provider finishes a1 with fieldsReadable true
+    then a1 is Succeeded
   }
   scenario AC-AIS-007 "実行を取り消すと、動いている AI を止める" {
     Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
@@ -122,7 +138,7 @@ requirements AiStep {
     Ugoke accepts a1
     Worker prepares a1 with withStillOk true, hasSession false
     Worker starts a1 with continued false
-    Provider finishes a1 with dataHasFields true
+    Provider finishes a1 with fieldsReadable true
     then a1 is Succeeded
   }
   scenario AC-AIS-002 "知らないプロバイダーは、定義のエラーになる" {
@@ -213,7 +229,7 @@ requirements AiStep {
     Ugoke accepts a1
     Worker prepares a1 with withStillOk true, hasSession false
     Worker starts a1 with continued false
-    Provider finishes a1 with dataHasFields false
+    Provider finishes a1 with fieldsReadable false
     then rejected
   }
   forbidden FB-AIS-008 "決まりに合う with で、失敗にしない" {
