@@ -57,3 +57,4 @@ plugins:
 | パッケージ                      | 足すもの                                                 |
 | ------------------------------- | -------------------------------------------------------- |
 | `@ugoke/adapter-ai-claude-code` | プロバイダーの [`claude-code`](providers/claude-code.md) |
+| `@ugoke/adapter-wait-github`    | 待ち方の [`github_pr`](wait-methods/github-pr.md)        |
