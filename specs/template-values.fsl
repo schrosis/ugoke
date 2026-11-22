@@ -3,10 +3,17 @@ fsl 5
 // Source: docs/reference/workflow-definition.md
 //
 // MODEL-TPL-001: a template has one reference. Whether it is the whole template, whether it is
-//                written in run, prompt, or env, and the kind of the value it names are given
-//                when it is written. Arrays count as objects. A template that is one call of a
-//                function, such as trim, is modeled as one reference whose kind is the value of
-//                the call (expression-functions.fsl).
+//                written in run, prompt, or env, and the kind of the value it names are given when
+//                it is written. Arrays count as objects. A reference with only white space around
+//                it, as String.prototype.trim removes it, such as the line break at the end of a
+//                YAML block scalar or U+3000, is the whole template, and the white space is
+//                dropped, also in run, prompt, and env. Any other character, such as a zero width
+//                space, makes it mixed. A template that is one call of a function, such as trim, is
+//                modeled as one reference whose kind is the value of the call
+//                (expression-functions.fsl). A template reads its references as a condition does
+//                (condition.fsl, MODEL-CND-004): one that goes through null or reads an output of a
+//                step that did not run is null, and another one that cannot be read, such as an
+//                index past the end of an array, fails the step.
 requirements TemplateValues {
   enum Kind { NoKind, TextKind, NumberKind, BooleanKind, NullKind, ObjectKind }
   enum Embedding { NoEmbedding, AsIs, AsEmpty, AsJson }
