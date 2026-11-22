@@ -24,6 +24,8 @@ fsl 5
 //                start a new line in that terminal.
 // MODEL-TPR-004: a line read from a pipe answers a value, and a multiline value ends with a line of
 //                ".". A prompt of a line shows the kind, such as (y/n, required).
+// MODEL-TPR-005: with --from-ai, the method does not ask, and the command writes a question line
+//                instead (from-ai.fsl).
 requirements TerminalPrompt {
   enum Kind { TextValue, MultilineValue, NumberValue, BooleanValue, ChoiceValue }
   enum Way { NoWay, Typed, Listed, Confirmed, Lines, LineByLine }

@@ -1,12 +1,14 @@
 fsl 5
 // Design of the processes that follow one run, and the lock between them
-// (packages/cli/src/lock.ts, commands/run.ts, commands/attach.ts):
+// (packages/cli/src/lock.ts, commands/run.ts, commands/attach.ts, commands/inbox.ts):
 //
 // - ugoke run starts the run, takes its lock, and runs its steps
 // - a process that detaches, or that exits, releases the lock, and the run goes on without one
 //   that runs its steps
 // - ugoke attach takes the lock of a run that no process follows, and runs its steps when no
 //   process runs them
+// - ugoke inbox answer --from-ai takes the lock as ugoke attach does, before it answers, and
+//   releases it when it exits at the next question or at the end (from-ai.fsl)
 // - ugoke cancel ends the run from another process, and the process that follows it then sees the
 //   end and releases the lock
 //

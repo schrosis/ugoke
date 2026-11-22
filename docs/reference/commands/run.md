@@ -19,7 +19,7 @@ ugoke run [options] <workflow>
 | `--address <address>`    | 使う Temporal Server のアドレスです                                                                                                             |
 | `--input <json-or-file>` | [ワークフローの入力](../workflow-definition.md#ワークフローの入力)です。JSON のオブジェクトか、`.json` のファイルのパスです                     |
 | `--detach`               | 実行を始めて、すぐに終了します。常駐プロセスが実行します。答え待ちは `ugoke inbox list` に出ます。`--address`、`--from-ai` とは一緒に使えません |
-| `--from-ai`              | AI エージェントなどのプログラム向けに、JSON Lines で出力します                                                                                  |
+| `--from-ai`              | AI エージェントなどのプログラム向けに、JSON Lines で出力し、最初の質問で終了します（「[プログラムから使う](../from-ai.md)」）                   |
 | `-h`, `--help`           | ヘルプを表示します                                                                                                                              |
 
 ## 使う Temporal Server
@@ -85,7 +85,9 @@ wait: detached. Run "ugoke attach --address localhost:7233" to continue
   - サーバーの準備に失敗した。たとえば、常駐プロセスが動いていない
   - `--detach` を指定したが、常駐プロセスがステップを動かさない
   - 暗号化の鍵が壊れている
-- `3`: ワークフローから切り離した。ワークフローは続いている
+- `3`
+  - ワークフローから切り離した。ワークフローは続いている
+  - `--from-ai` で、質問が来た。ワークフローは答えを待っている
 - `130`
   - ワークフローが `ugoke cancel` で取り消された
   - 実行を始める前に Ctrl+C を押した
