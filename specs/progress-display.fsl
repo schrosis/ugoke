@@ -1,7 +1,8 @@
 fsl 5
 // Requirements for how ugoke run and ugoke attach show the progress of a step: what they quote, the
 // colors, and the status line at the bottom of the terminal.
-// Source: docs/reference/commands/run.md ("出力")
+// The docs do not describe these, which the user sees in the terminal, so they are kept here only.
+// docs/reference/config.md has output.showCommands.
 //
 // MODEL-DSP-001: one start of a step is modeled. Its kind, whether its prompt has more than five
 //                lines, whether output.showCommands of the configuration file is false, whether
