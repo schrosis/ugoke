@@ -1,0 +1,138 @@
+fsl 5
+// Requirements for the values of a condition that the definition shows can never be true or
+// false: ugoke validate, ugoke run, and the other commands that check a definition report them as
+// errors of the definition. How a condition is evaluated is in condition.fsl.
+// Source: docs/reference/workflow-definition.md ("分岐")
+//
+// MODEL-CTY-001: one value in a true-or-false position is modeled: the whole condition, the operand
+//                of !, or an operand of && or ||. A comparison such as x == true is not in such a
+//                position, and its operands are not checked. Its kind is given when the definition
+//                is checked: true or false; another literal, such as 'yes', 1, or null; a workflow
+//                input of type boolean or of another type; an output of a step, latest or of a
+//                visit; or a value that the run decides, which is an output of the step itself,
+//                result, env.<name>, or a call of a helper function.
+// MODEL-CTY-002: mayBeNull tells whether the value is null in some runs: a boolean workflow input
+//                that is neither required nor has a default, an output of a step that does not run
+//                before on every path from start, and an output of a visit after the first, such as
+//                visits[1]. The latest output and the first visit of a step that always runs before
+//                have a value. A step runs before another always when every path from start to the
+//                other goes through it, also around a loop; after a branch joins, only the steps
+//                before the branch do, and a step that loops to itself does not run before itself,
+//                so its own outputs read through steps are null on its first visit. guarded tells
+//                whether the condition compares the same reference with null on the left: with !=
+//                null on the left of &&, or with == null on the left of ||, also when it is
+//                negated, such as !(x == null) && x, or when other comparisons come between, such
+//                as x == null || y == null || x. A comparison on the right, a field of the
+//                reference, such as x != null && x.b, and a comparison with a value other than
+//                null, such as x != false && x, do not guard it. A guarded reference is not
+//                reported for being null, but is for its type. The type of an output of a step is
+//                left to the run.
+// MODEL-CTY-003: only the conditions of steps that start reaches are checked, of every type of
+//                step, and only when the intermediate representation passes its validation, such as
+//                of the transitions and the references; an error of with that a plugin reports,
+//                such as a wait step without message, does not keep them from being checked. These
+//                errors are listed after the others. The check is not part of the validation that
+//                the workflow code runs again for a run that already started, so a run of an
+//                earlier definition does not fail on replay.
+requirements ConditionTypes {
+  enum Kind { BoolLiteral, OtherLiteral, BooleanInput, OtherInput, StepOutput, RunDecides }
+  actor Author, Ugoke
+
+  entity Operand {
+    kind: Kind = BoolLiteral
+    mayBeNull: Bool = false
+    guarded: Bool = false
+    lifecycle Unwritten -> Written -> Accepted
+    lifecycle Written -> Reported
+  }
+
+  def typed(k: Kind) = k == BoolLiteral or k == BooleanInput or k == StepOutput or k == RunDecides
+  def nullable(k: Kind, n: Bool) = (k == BooleanInput or k == StepOutput) and n
+  def fine(k: Kind, n: Bool, g: Bool) = typed(k) and (not nullable(k, n) or g)
+
+  event write = Author writes Operand with kind, mayBeNull, guarded (Unwritten -> Written)
+    covers REQ-CTY-001 "条件の真か偽かの位置にある値が、true か false にならないと定義からわかるときは、定義のエラーにする"
+  event accept = Ugoke accepts Operand (Written -> Accepted)
+  event report = Ugoke reports Operand (Written -> Reported)
+
+  rule REQ-CTY-002 "true と false のほかの値と、boolean でないワークフローの入力は、定義のエラー" {
+    allow Ugoke accepts Operand only when typed(kind)
+  }
+  rule REQ-CTY-003 "null になりうるワークフローの入力とステップの outputs は、前で null でないことを確かめていなければ、定義のエラー" {
+    allow Ugoke accepts Operand only when not nullable(kind, mayBeNull) or guarded
+  }
+  rule REQ-CTY-004 "自分の outputs、result、env、ヘルパー関数の呼び出しは、定義では断らず、実行のときに確かめる" {
+    allow Ugoke reports Operand only when not fine(kind, mayBeNull, guarded)
+    RunDecidesAccepted: always Operand in Reported has kind != RunDecides
+  }
+
+  scenario AC-CTY-001 "true と false は、受け付ける" {
+    Author writes o1 with kind BoolLiteral, mayBeNull false, guarded false
+    Ugoke accepts o1
+    then o1 is Accepted
+  }
+  scenario AC-CTY-002 "'yes' は、定義のエラー" {
+    Author writes o1 with kind OtherLiteral, mayBeNull false, guarded false
+    Ugoke reports o1
+    then o1 is Reported
+  }
+  scenario AC-CTY-003 "number のワークフローの入力は、定義のエラー" {
+    Author writes o1 with kind OtherInput, mayBeNull false, guarded false
+    Ugoke reports o1
+    then o1 is Reported
+  }
+  scenario AC-CTY-004 "default のない、必須でない boolean の入力は、定義のエラー" {
+    Author writes o1 with kind BooleanInput, mayBeNull true, guarded false
+    Ugoke reports o1
+    then o1 is Reported
+  }
+  scenario AC-CTY-005 "前で null でないことを確かめた入力は、受け付ける" {
+    Author writes o1 with kind BooleanInput, mayBeNull true, guarded true
+    Ugoke accepts o1
+    then o1 is Accepted
+  }
+  scenario AC-CTY-006 "動かないことがあるステップの outputs は、定義のエラー" {
+    Author writes o1 with kind StepOutput, mayBeNull true, guarded false
+    Ugoke reports o1
+    then o1 is Reported
+  }
+  scenario AC-CTY-007 "いつも前に動くステップの outputs は、受け付ける" {
+    Author writes o1 with kind StepOutput, mayBeNull false, guarded false
+    Ugoke accepts o1
+    then o1 is Accepted
+  }
+  scenario AC-CTY-008 "実行が決める値は、受け付ける" {
+    Author writes o1 with kind RunDecides, mayBeNull true, guarded false
+    Ugoke accepts o1
+    then o1 is Accepted
+  }
+
+  forbidden FB-CTY-001 "true と false のほかの値を、受け付けない" {
+    Author writes o1 with kind OtherLiteral, mayBeNull false, guarded false
+    Ugoke accepts o1
+    then rejected
+  }
+  forbidden FB-CTY-002 "boolean でない入力を、確かめても受け付けない" {
+    Author writes o1 with kind OtherInput, mayBeNull true, guarded true
+    Ugoke accepts o1
+    then rejected
+  }
+  forbidden FB-CTY-003 "null になりうるステップの outputs を、確かめずに受け付けない" {
+    Author writes o1 with kind StepOutput, mayBeNull true, guarded false
+    Ugoke accepts o1
+    then rejected
+  }
+  forbidden FB-CTY-004 "実行が決める値を、定義で断らない" {
+    Author writes o1 with kind RunDecides, mayBeNull true, guarded false
+    Ugoke reports o1
+    then rejected
+  }
+  forbidden FB-CTY-005 "必須の boolean の入力を、断らない" {
+    Author writes o1 with kind BooleanInput, mayBeNull false, guarded false
+    Ugoke reports o1
+    then rejected
+  }
+}
+verify {
+  instances Operand = 1
+}
