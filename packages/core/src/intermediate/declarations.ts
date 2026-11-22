@@ -89,7 +89,7 @@ export const inputDeclarationDefinitionSchema = z.discriminatedUnion(
       .boolean()
       .optional()
       .describe(
-        "Whether the value can span lines. The terminal wait method asks for it in an editor",
+        "Whether the value can span lines. The terminal wait method asks for it on several lines",
       ),
   ),
 );
