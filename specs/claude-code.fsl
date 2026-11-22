@@ -12,7 +12,11 @@ fsl 5
 //                with CLAUDE.md, allow it, and whether it edits a file in .ugoke with a tool that
 //                edits files, are given when the AI tries it. A command of Bash, when allowedTools
 //                allows it, is not such a tool. Nobody can answer during a step, so the provider
-//                never asks, and denies what is not allowed (permissionMode: dontAsk).
+//                never asks, and denies what is not allowed (permissionMode: dontAsk). A path of a
+//                rule of Read or Edit in allowedTools that does not start with /, //, or ~/ is
+//                anchored to the root of the project, so that a cd of the AI does not change what
+//                it matches; a name without /, such as *.md, is put under ** there, so that it
+//                matches at any depth. Other paths and the rules of other tools go as written.
 // MODEL-CCD-003: whether Claude Code succeeds, and whether it returns a result, are given when it
 //                ends. A result without a schema is the text of its last answer. With a schema,
 //                hasResult also tells whether the result has the structured output, which the AI
