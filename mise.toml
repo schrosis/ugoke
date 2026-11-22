@@ -4,7 +4,7 @@ node = "26.13.1"
 pnpm = "12.21.0"
 
 [tools."github:ymm-oss/fsl"]
-version = "5.1.0"
+version = "v5.2.0"
 bin = "fslc"
 os = ["linux", "macos/arm64", "windows"]
 
