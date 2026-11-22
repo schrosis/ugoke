@@ -61,7 +61,7 @@ requirements TerminalPrompt {
   event ask = Worker asks Question with kind, required, hasDefault, terminal (Pending -> Asked)
     set way = wayOf(input kind, input hasDefault, input terminal),
       canSkip = skippable(input kind, input required, input hasDefault, input terminal)
-    covers REQ-TPR-001 "標準入力と標準出力がどちらもターミナルなら、選ぶ形で聞く。パイプなどのときは、1 行ずつ読む"
+    covers REQ-TPR-001 "標準入力と標準出力がどちらもターミナルなら、対話の形で聞く。パイプなどのときは、1 行ずつ読む"
   event press = User presses MultilineKey with key, kitty (Up -> Pressed)
     set submits = submitting(input key, input kitty), breaksLine = breaking(input key, input kitty)
     covers REQ-TPR-004 "multiline の値は、その場で複数行を入力する。Enter で確定し、Alt+Enter か、行の終わりの \\ のあとに Enter で改行する。kitty keyboard protocol に対応したターミナルでは、Shift+Enter でも改行する。貼り付けた文の改行は残る"
@@ -70,7 +70,7 @@ requirements TerminalPrompt {
     ListChoice: always Question in Asked has (way == Listed) == (terminal and kind == ChoiceValue)
     SkipOptional: always Question in Asked has canSkip == skippable(kind, required, hasDefault, terminal)
   }
-  rule REQ-TPR-003 "default のある boolean は、y か n で確かめる。ほかの値は、入力したあとに確かめる" {
+  rule REQ-TPR-003 "default のある boolean は、y か n で確かめる。ほかの値は、1 行で入力し、宣言に合わなければ、理由を表示して、その場で直せる" {
     ConfirmBoolean: always Question in Asked has (way == Confirmed) == (terminal and kind == BooleanValue and hasDefault)
     WayFollowsKind: always Question in Asked has way == wayOf(kind, hasDefault, terminal)
   }
