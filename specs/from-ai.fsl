@@ -43,6 +43,10 @@ fsl 5
 //                stay. A run of its own Worker that detached at a question has no Worker until
 //                ugoke inbox answer --from-ai runs one or ugoke attach follows it, so ugoke inbox
 //                list cannot read it meanwhile.
+// MODEL-FAI-006: an error in the options, such as --from-ai with --detach, a missing --step or
+//                --values of ugoke inbox answer, or a --visit that is not a whole number, is
+//                refused before the command runs. It writes no line, shows the message on
+//                standard error, and ends with 1, so neither AiRun nor AiAnswer models it.
 requirements FromAi {
   enum Exit { Running, Zero, One, Three, OneThirty }
   enum Last { NoLine, StartedLine, QuestionLine, CompletedLine, FailedLine, CancelledLine, DetachedLine, AnsweredLine }
