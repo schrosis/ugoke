@@ -14,13 +14,13 @@ ugoke run [options] <workflow>
 
 ## オプション
 
-| オプション               | 内容                                                                                                                               |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `--address <address>`    | 使う Temporal Server のアドレスです                                                                                                |
-| `--input <json-or-file>` | [ワークフローの入力](../workflow-definition.md#ワークフローの入力)です。JSON のオブジェクトか、`.json` のファイルのパスです        |
-| `--detach`               | 実行を始めて、すぐに終了します。常駐プロセスが実行します。答え待ちは `ugoke inbox list` に出ます。`--address` とは一緒に使えません |
-| `--from-ai`              | AI エージェントなどのプログラム向けに、JSON Lines で出力します                                                                     |
-| `-h`, `--help`           | ヘルプを表示します                                                                                                                 |
+| オプション               | 内容                                                                                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--address <address>`    | 使う Temporal Server のアドレスです                                                                                                             |
+| `--input <json-or-file>` | [ワークフローの入力](../workflow-definition.md#ワークフローの入力)です。JSON のオブジェクトか、`.json` のファイルのパスです                     |
+| `--detach`               | 実行を始めて、すぐに終了します。常駐プロセスが実行します。答え待ちは `ugoke inbox list` に出ます。`--address`、`--from-ai` とは一緒に使えません |
+| `--from-ai`              | AI エージェントなどのプログラム向けに、JSON Lines で出力します                                                                                  |
+| `-h`, `--help`           | ヘルプを表示します                                                                                                                              |
 
 ## 使う Temporal Server
 
@@ -55,12 +55,13 @@ ugoke run [options] <workflow>
 
 かかった時間は、1 分未満なら `4.1s`、1 時間未満なら `1m 02s`、それより長ければ `1h 05m` の形です。
 
-| 結果       | 最後の行                                              | 出力先     |
-| ---------- | ----------------------------------------------------- | ---------- |
-| 完了       | `<workflow>: completed (<実行したステップ>, ...)`     | 標準出力   |
-| 失敗       | `<workflow>: failed: <理由>`                          | 標準エラー |
-| 切り離した | `<workflow>: detached. Run "ugoke attach" to continue` | 標準エラー |
-| 取り消した | `<workflow>: cancelled`                               | 標準エラー |
+| 結果                | 最後の行                                                                                                                                   | 出力先     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| 完了                | `<workflow>: completed (<実行したステップ>, ...)`                                                                                          | 標準出力   |
+| 失敗                | `<workflow>: failed: <理由>`                                                                                                               | 標準エラー |
+| 切り離した          | `<workflow>: detached. Run "ugoke attach" to continue`                                                                                     | 標準エラー |
+| 取り消した          | `<workflow>: cancelled`                                                                                                                    | 標準エラー |
+| `--detach` で始めた | `<workflow>: started <workflow-id> in ugoke daemon. Its questions wait in "ugoke inbox list", and "ugoke attach <workflow-id>" follows it` | 標準出力   |
 
 定義に問題があるときは、`ugoke validate` と同じ形で、標準エラーに表示します。
 
