@@ -27,7 +27,7 @@ ugoke run [options] <workflow>
 次の順に決めます。
 
 1. `--address` を指定したときは、そのサーバー
-2. `.ugoke/config.yaml` に `temporal.address` があるときは、そのサーバー
+2. [プロジェクトの設定](../config.md)に `temporal.address` があるときは、そのサーバー
 3. それ以外は、`ugoke daemon start` で起動した常駐プロセスのサーバー
 
 常駐プロセスがステップを動かさないのは、次のときです。
@@ -79,6 +79,7 @@ wait: detached. Run "ugoke attach --address localhost:7233" to continue
   - ワークフローが失敗した
   - 定義に問題があった
   - `--input` が正しくない
+  - [プロジェクトの設定](../config.md)に問題がある
   - サーバーの準備に失敗した。たとえば、常駐プロセスが動いていない
   - 暗号化の鍵が壊れている
 - `3`: ワークフローから切り離した。ワークフローは続いている

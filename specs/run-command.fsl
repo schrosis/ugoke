@@ -9,6 +9,9 @@ fsl 5
 //                project on the chosen server: it runs this version of ugoke, and with
 //                temporal.address, it serves that address.
 // MODEL-CMD-002: whether the run succeeds is not decided by ugoke, so a failure is a fault event.
+// MODEL-CMD-003: a problem in the configuration file of the project (project-config.fsl) ends the
+//                command with 1 before it runs anything, as definitionOk false does, even with
+//                --address.
 requirements RunCommand {
   enum Exit { Running, Zero, One, Three, OneThirty }
   enum Line { NoLine, OnStdout, OnStderr }

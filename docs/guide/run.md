@@ -14,7 +14,7 @@ $ ugoke daemon start
 
 常駐プロセスは、初めて起動するときに、Temporal Server を起動する Temporal CLI をダウンロードします（「[Temporal CLI](../reference/commands/daemon.md#temporal-cli)」）。
 
-常駐プロセスを使わないときは、用意した Temporal Server を `--address` で指定します。
+常駐プロセスを使わないときは、用意した Temporal Server を `--address` で指定します。プロジェクトの設定の `temporal.address` でも指定できます（「[プロジェクトの設定](../reference/config.md)」）。
 
 ## 実行する
 
