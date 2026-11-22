@@ -2,7 +2,8 @@ fsl 5
 // Requirements for the shape of a workflow definition.
 // The shape is a necessary condition: a definition that fails here is rejected, and one that
 // passes goes on to the checks of workflow-transitions.fsl, branches.fsl, condition.fsl,
-// step-references.fsl, wait-step.fsl, ai-step.fsl, and ai-result.fsl, which accept or reject it.
+// condition-types.fsl, step-references.fsl, wait-step.fsl, ai-step.fsl, and ai-result.fsl, which
+// accept or reject it.
 // How often a step of a loop runs is in loops.fsl.
 // Source: docs/reference/workflow-definition.md
 //

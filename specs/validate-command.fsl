@@ -5,11 +5,11 @@ fsl 5
 //
 // MODEL-VAL-003: whether the definition file is found (project-files.fsl) and whether the
 //                definition passes the checks (workflow-definition.fsl, workflow-transitions.fsl,
-//                branches.fsl, condition.fsl, step-references.fsl, wait-step.fsl, ai-step.fsl,
-//                ai-result.fsl) are given when
-//                the command starts, and so is whether the problem is in the YAML syntax, an
-//                anchor or an alias. A problem in the configuration file of the project
-//                (project-config.fsl) ends the command like an invalid definition.
+//                branches.fsl, condition.fsl, condition-types.fsl, step-references.fsl,
+//                wait-step.fsl, ai-step.fsl, ai-result.fsl) are given when the command starts, and
+//                so is whether the problem is in the YAML syntax, an anchor or an alias. A problem
+//                in the configuration file of the project (project-config.fsl) ends the command
+//                like an invalid definition.
 requirements ValidateCommand {
   enum Exit { Running, Zero, One }
   enum Stream { Nowhere, Stdout, Stderr }

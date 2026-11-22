@@ -15,16 +15,18 @@ fsl 5
 //                that is neither required nor has a default, an output of a step that does not run
 //                before on every path from start, and an output of a visit after the first, such as
 //                visits[1]. The latest output and the first visit of a step that always runs before
-//                have a value. A step runs before another always when every path from start to the
-//                other goes through it, also around a loop; after a branch joins, only the steps
-//                before the branch do, and a step that loops to itself does not run before itself,
-//                so its own outputs read through steps are null on its first visit. guarded tells
-//                whether the condition compares the same reference with null on the left: with !=
-//                null on the left of &&, or with == null on the left of ||, also when it is
-//                negated, such as !(x == null) && x, or when other comparisons come between, such
-//                as x == null || y == null || x. A comparison on the right, a field of the
-//                reference, such as x != null && x.b, and a comparison with a value other than
-//                null, such as x != false && x, do not guard it. A guarded reference is not
+//                are not null for not having run; a null that the step itself gives, such as all of
+//                its outputs over 512 KiB with continueOnError (continue-on-error.fsl,
+//                REQ-COE-007), is left to the run. A step runs before another always when every
+//                path from start to the other goes through it, also around a loop; after a branch
+//                joins, only the steps before the branch do, and a step that loops to itself does
+//                not run before itself, so its own outputs read through steps are null on its first
+//                visit. guarded tells whether the condition compares the same reference with null
+//                on the left: with != null on the left of &&, or with == null on the left of ||,
+//                also when it is negated, such as !(x == null) && x, or when other comparisons come
+//                between, such as x == null || y == null || x. A comparison on the right, a field
+//                of the reference, such as x != null && x.b, and a comparison with a value other
+//                than null, such as x != false && x, do not guard it. A guarded reference is not
 //                reported for being null, but is for its type. The type of an output of a step is
 //                left to the run.
 // MODEL-CTY-003: only the conditions of steps that start reaches are checked, of every type of
