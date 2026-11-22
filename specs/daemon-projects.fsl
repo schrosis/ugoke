@@ -7,7 +7,10 @@ fsl 5
 //                are given when a command registers it, and again when the resident process
 //                restarts.
 // MODEL-DPJ-002: whether a script or an AI step of the project is running is given when the
-//                resident process is asked to stop. scriptRunning stands for both.
+//                resident process is asked to stop. scriptRunning stands for both. A wait step
+//                whose method answers in the Worker is not waited for: its method stops at once,
+//                and the next Worker asks again (worker-wait.fsl). The Worker of a project gets the
+//                wait methods of its plugins.
 // MODEL-DPJ-003: the command that asks ends with 1 when the project is refused, as run-command.fsl
 //                and attach-cancel.fsl end a command whose server cannot be prepared.
 // MODEL-DPJ-004: the resident process stops in the same way when it receives SIGTERM or SIGINT,

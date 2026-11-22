@@ -10,7 +10,9 @@ fsl 5
 //                earlier steps and of the workflow input that its run, prompt, env, and outputs
 //                reference, and env of the workflow. For an AI step, they also include the
 //                options of with after their expressions are evaluated, and for a wait step with
-//                branches, the values that its conditions reference.
+//                branches, the values that its conditions reference. For a wait step whose method
+//                answers in the Worker, they include the options of with and the run, with its ID
+//                and its input, which the method receives (worker-wait.fsl).
 // MODEL-SVL-003: with continueOnError, outputs over 512 KiB end the step as a failure that goes
 //                on, with every output null. Received values over 512 KiB fail the run still,
 //                because the workflow checks them before the step starts (continue-on-error.fsl).

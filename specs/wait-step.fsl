@@ -12,6 +12,8 @@ fsl 5
 //                that always fits. A wait has no time limit, so no event ends it by time.
 // MODEL-WAI-004: how the terminal method asks for each value, with interactive prompts or line by
 //                line, is in terminal-prompt.fsl.
+// MODEL-WAI-005: a method that answers in the Worker, which no follower asks, is in
+//                worker-wait.fsl.
 requirements WaitStep {
   enum Source { NoSource, Given, Default, Null }
   actor Author, Worker, User
