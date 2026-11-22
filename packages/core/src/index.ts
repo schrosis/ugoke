@@ -6,6 +6,7 @@ export {
   inputDeclarationDefinitionSchema,
   inputDeclarationSchema,
   inputDeclarationsSchema,
+  workflowInputDeclarationDefinitionSchema,
   intermediateSchema,
   intermediateVersion,
   resolveWorkflowInput,
