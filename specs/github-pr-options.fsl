@@ -7,7 +7,12 @@ fsl 5
 //                whether repo is given and has the form owner/repo, whether events has checks or
 //                review, whether checks or review is given, and whether a list repeats a value are
 //                given then. pr, repo, message, review.authors, and checks.names can have
-//                expressions, and events and review.states cannot. A value with an expression skips
+//                expressions, and events, review.states, and review.authorAssociations cannot.
+//                review.authorAssociations lists OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR,
+//                FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, MANNEQUIN, and NONE, in capitals, with one at
+//                least, and repeated tells a repetition in it too. botOnly tells whether a name of
+//                review.authors is only [bot], in any case; only one [bot] at the end is removed,
+//                so claude[bot][bot] names the bot claude[bot]. A value with an expression skips
 //                the check of its form, and is checked again after the expression is evaluated,
 //                which fails the step when it is wrong. pr is a positive integer, or a string of
 //                one, or a URL of a pull request on github.com, with or without a / at the end.
@@ -27,6 +32,7 @@ requirements GithubPrOptions {
     wantsReview: Bool = false
     reviewGiven: Bool = false
     repeated: Bool = false
+    botOnly: Bool = false
     lifecycle Unwritten -> Written -> Accepted
     lifecycle Written -> Rejected
   }
@@ -43,11 +49,11 @@ requirements GithubPrOptions {
     else if p == PrUrl then not rg
     else if p == PrNumber then rg and ro
     else not rg or ro
-  def optionsOk(p: Pr, rg: Bool, ro: Bool, wc: Bool, cg: Bool, wr: Bool, rv: Bool, rep: Bool) =
-    prOk(p, rg, ro) and wc == cg and (not rv or wr) and not rep
+  def optionsOk(p: Pr, rg: Bool, ro: Bool, wc: Bool, cg: Bool, wr: Bool, rv: Bool, rep: Bool, b: Bool) =
+    prOk(p, rg, ro) and wc == cg and (not rv or wr) and not rep and not b
 
-  event write = Author writes Options with pr, repoGiven, repoOk, wantsChecks, checksGiven, wantsReview, reviewGiven, repeated (Unwritten -> Written)
-    covers REQ-GHP-002 "pr は URL か番号。番号なら repo が要り、URL なら repo は書けない。checks は events に checks があるときに要り、ないときは書けない。review は events に review があるときだけ書ける。一覧に同じ値は書けない"
+  event write = Author writes Options with pr, repoGiven, repoOk, wantsChecks, checksGiven, wantsReview, reviewGiven, repeated, botOnly (Unwritten -> Written)
+    covers REQ-GHP-002 "pr は URL か番号。番号なら repo が要り、URL なら repo は書けない。checks は events に checks があるときに要り、ないときは書けない。review は events に review があるときだけ書ける。一覧に同じ値は書けない。review.authors に [bot] だけの名前は書けない"
   event accept = Ugoke accepts Options (Written -> Accepted)
   event reject = Ugoke rejects Options (Written -> Rejected)
   event set = Author sets Setting with tooShort, tooLong (Unset -> Set)
@@ -55,9 +61,9 @@ requirements GithubPrOptions {
   event take = Ugoke takes Setting (Set -> Taken)
   event refuse = Ugoke refuses Setting (Set -> Refused)
 
-  rule REQ-GHP-002 "pr は URL か番号。番号なら repo が要り、URL なら repo は書けない。checks は events に checks があるときに要り、ないときは書けない。review は events に review があるときだけ書ける。一覧に同じ値は書けない" {
-    allow Ugoke accepts Options only when optionsOk(pr, repoGiven, repoOk, wantsChecks, checksGiven, wantsReview, reviewGiven, repeated)
-    allow Ugoke rejects Options only when not optionsOk(pr, repoGiven, repoOk, wantsChecks, checksGiven, wantsReview, reviewGiven, repeated)
+  rule REQ-GHP-002 "pr は URL か番号。番号なら repo が要り、URL なら repo は書けない。checks は events に checks があるときに要り、ないときは書けない。review は events に review があるときだけ書ける。一覧に同じ値は書けない。review.authors に [bot] だけの名前は書けない" {
+    allow Ugoke accepts Options only when optionsOk(pr, repoGiven, repoOk, wantsChecks, checksGiven, wantsReview, reviewGiven, repeated, botOnly)
+    allow Ugoke rejects Options only when not optionsOk(pr, repoGiven, repoOk, wantsChecks, checksGiven, wantsReview, reviewGiven, repeated, botOnly)
   }
   rule REQ-GHP-006 "確かめる間隔は、プラグインの設定の pollInterval で決める。10s から 168h までで、既定は 30s" {
     allow Ugoke takes Setting only when not tooShort and not tooLong
@@ -65,17 +71,17 @@ requirements GithubPrOptions {
   }
 
   scenario AC-GHP-001 "URL の pull request のマージを待つ" {
-    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false
+    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false, botOnly false
     Ugoke accepts o1
     then o1 is Accepted
   }
   scenario AC-GHP-002 "番号の pull request は、repo と一緒に書く" {
-    Author writes o1 with pr PrNumber, repoGiven true, repoOk true, wantsChecks true, checksGiven true, wantsReview true, reviewGiven true, repeated false
+    Author writes o1 with pr PrNumber, repoGiven true, repoOk true, wantsChecks true, checksGiven true, wantsReview true, reviewGiven true, repeated false, botOnly false
     Ugoke accepts o1
     then o1 is Accepted
   }
   scenario AC-GHP-003 "番号だけでは、定義のエラー" {
-    Author writes o1 with pr PrNumber, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false
+    Author writes o1 with pr PrNumber, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false, botOnly false
     Ugoke rejects o1
     then o1 is Rejected
   }
@@ -86,38 +92,43 @@ requirements GithubPrOptions {
   }
 
   forbidden FB-GHP-001 "URL の pull request に、repo を書かない" {
-    Author writes o1 with pr PrUrl, repoGiven true, repoOk true, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false
+    Author writes o1 with pr PrUrl, repoGiven true, repoOk true, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false, botOnly false
     Ugoke accepts o1
     then rejected
   }
   forbidden FB-GHP-002 "checks を待つのに、checks.names を省かない" {
-    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks true, checksGiven false, wantsReview false, reviewGiven false, repeated false
+    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks true, checksGiven false, wantsReview false, reviewGiven false, repeated false, botOnly false
     Ugoke accepts o1
     then rejected
   }
   forbidden FB-GHP-003 "review を待たないのに、review を書かない" {
-    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven true, repeated false
+    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven true, repeated false, botOnly false
     Ugoke accepts o1
     then rejected
   }
   forbidden FB-GHP-004 "一覧に、同じ値を書かない" {
-    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated true
+    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated true, botOnly false
     Ugoke accepts o1
     then rejected
   }
   forbidden FB-GHP-005 "形の合わない repo を、受け付けない" {
-    Author writes o1 with pr PrNumber, repoGiven true, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false
+    Author writes o1 with pr PrNumber, repoGiven true, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false, botOnly false
     Ugoke accepts o1
     then rejected
   }
   forbidden FB-GHP-006 "正しい with を、断らない" {
-    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false
+    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview false, reviewGiven false, repeated false, botOnly false
     Ugoke rejects o1
     then rejected
   }
   forbidden FB-GHP-010 "長すぎる間隔を、受け付けない" {
     Author sets s1 with tooShort false, tooLong true
     Ugoke takes s1
+    then rejected
+  }
+  forbidden FB-GHP-011 "[bot] だけの名前を、受け付けない" {
+    Author writes o1 with pr PrUrl, repoGiven false, repoOk false, wantsChecks false, checksGiven false, wantsReview true, reviewGiven true, repeated false, botOnly true
+    Ugoke accepts o1
     then rejected
   }
 }
