@@ -122,7 +122,7 @@ jobs:
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
       - id: claude
-        uses: anthropics/claude-code-action@v1.0.276
+        uses: anthropics/claude-code-action@v1.0.283
         if: steps.pr.outputs.reviewable == 'true'
         continue-on-error: true
         with:
