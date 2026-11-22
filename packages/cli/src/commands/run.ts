@@ -4,7 +4,8 @@ import { jsonBytes, maxValueBytes, runWorkflow, startWorkflow } from "@ugoke/eng
 import { realpath } from "node:fs/promises";
 
 import { reportAiFailure, writeAiLine } from "../ai.js";
-import { cancelledExitCode, followRun, rootMessage } from "../follow.js";
+import { cancelledExitCode } from "../exit-codes.js";
+import { followRun, rootMessage } from "../follow.js";
 import { readWorkflowInput } from "../input.js";
 import { acquireRunLock } from "../lock.js";
 import type { RunLock } from "../lock.js";

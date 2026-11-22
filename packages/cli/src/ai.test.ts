@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createAiTerminalPlugin, reportAiFailure, writeAiLine } from "./ai.ts";
 import type { AiQuestion } from "./ai.ts";
+import { cancelledExitCode } from "./exit-codes.ts";
 import { createOutput } from "./testing.ts";
 
 describe("createAiTerminalPlugin", () => {
@@ -55,6 +56,21 @@ describe("reportAiFailure", () => {
     expect(output.written).toEqual({
       stderr: "Workflow not found: deploy\n",
       stdout: '{"message":"Workflow not found: deploy","type":"failed"}\n',
+    });
+  });
+
+  it("ends the output with a cancelled line when the command is interrupted without a line", async () => {
+    const output = createOutput();
+
+    await expect(
+      reportAiFailure(output, async ({ stderr }) => {
+        stderr("deploy: cancelled\n");
+        return cancelledExitCode;
+      }),
+    ).resolves.toBe(cancelledExitCode);
+    expect(output.written).toEqual({
+      stderr: "deploy: cancelled\n",
+      stdout: '{"type":"cancelled"}\n',
     });
   });
 
