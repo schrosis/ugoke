@@ -28,7 +28,10 @@ fsl 5
 //                changed, while a Worker of the project runs on the server. The old Worker stops
 //                after the steps that it runs finish, which oldStops tells, only after the new one
 //                started. Two Workers on the same task queue share its tasks until then
-//                (plugins.fsl).
+//                (plugins.fsl). Only the content of plugins in the file is compared, so an updated
+//                package restarts no Worker, and a new Worker imports the module that the process
+//                imported before, which Node keeps. The new code runs after the resident process
+//                restarts.
 requirements DaemonProjects {
   actor User, Daemon
 
