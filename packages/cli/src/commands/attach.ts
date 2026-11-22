@@ -5,13 +5,8 @@ import { createLocalScriptRunner } from "@ugoke/adapter-script-local";
 import { parseDefinition } from "@ugoke/definition";
 import { attachWorkflow, terminateWorkflow } from "@ugoke/engine";
 
-import {
-  cancelledExitCode,
-  createTerminal,
-  followRun,
-  isCancelled,
-  rootMessage,
-} from "../follow.js";
+import { cancelledExitCode } from "../exit-codes.js";
+import { createTerminal, followRun, isCancelled, rootMessage } from "../follow.js";
 import { loadEncryptionKey } from "../encryption.js";
 import { acquireRunLock, RunLockedError } from "../lock.js";
 import { chooseRun, listProjectRuns } from "../runs.js";
