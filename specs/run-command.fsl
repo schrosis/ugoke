@@ -12,7 +12,14 @@ fsl 5
 // MODEL-CMD-003: a problem in the configuration file of the project (project-config.fsl) ends the
 //                command with 1 before it runs anything, as definitionOk false does, even with
 //                --address.
-// MODEL-CMD-004: ugoke run --detach, which does not follow the run, is in run-detach.fsl.
+// MODEL-CMD-004: ugoke run --detach, which does not follow the run, is in run-detach.fsl. ugoke run
+//                --from-ai, which writes JSON lines and exits at the first question, is in
+//                from-ai.fsl.
+// MODEL-CMD-005: a problem that does not stop the run is a warning, which the command shows once
+//                per kind and run on standard error, as "<workflow>: warning: <message>", and
+//                follows the run on. The one warning now is that the progress log of the run
+//                cannot be read, which hides the later progress. ugoke attach warns in the same
+//                way.
 requirements RunCommand {
   enum Exit { Running, Zero, One, Three, OneThirty }
   enum Line { NoLine, OnStdout, OnStderr }

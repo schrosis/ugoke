@@ -1,0 +1,305 @@
+fsl 5
+// Requirements for --from-ai: ugoke run, ugoke inbox list, and ugoke inbox answer write JSON lines
+// for a program such as an AI agent, and a run is driven question by question.
+// Source: docs/reference/from-ai.md, docs/reference/commands/run.md,
+// docs/reference/commands/inbox.md
+//
+// MODEL-FAI-001: each line of standard output is one JSON object with a type: started, answered,
+//                stepStarted, stepFinished, question, unreadable, warning, completed, failed,
+//                cancelled, or detached. started has the workflow ID and the name. answered has
+//                the workflow ID, the step, and the visit when it was given. stepStarted and
+//                stepFinished are the events of the progress (print-progress.fsl), without the
+//                output of steps. question has the workflow ID, the name when the run records it,
+//                the step, the visit, the message of the step, the declared answers, the input of
+//                the workflow, and, from ugoke inbox list only, inDaemon. unreadable has the
+//                workflow ID and the reason. completed has the workflow ID and the executed steps.
+//                failed has the message. The messages for a person still go to standard error,
+//                except for a warning (run-command.fsl, MODEL-CMD-005), which the warning line
+//                replaces. Neither colors nor a status line are shown (progress-display.fsl).
+// MODEL-FAI-002: one command of ugoke run --from-ai is modeled. Whether it starts the run is given
+//                when it is typed, from the checks and the server of run-command.fsl. At a wait
+//                step of the terminal method, the method does not ask in the terminal, and the
+//                command writes the question line and detaches; a wait step that the Worker answers
+//                (worker-wait.fsl) is followed through. ugoke run --from-ai follows a run with the
+//                lock of follow-lock.fsl, uses the server of run-command.fsl, and cannot be
+//                combined with --detach (run-detach.fsl).
+// MODEL-FAI-003: one command of ugoke inbox answer --from-ai is modeled. Whether another process
+//                follows the run and whether the run takes the answer are given when it is typed.
+//                Other refusals before the answer, such as of --values, are as in
+//                inbox-command.fsl. The command takes the lock of the run before it answers, and
+//                runs its own Worker unless it sees that the resident process runs the run. With
+//                --address, it never sees that (inbox-command.fsl, MODEL-INB-001), so its Worker
+//                serves the task queue of the run beside the one of the resident process, if any.
+//                It then follows the run as ugoke run --from-ai does, without the events before
+//                the answer. One of --from-ai and --detach is required, and they cannot be
+//                combined.
+// MODEL-FAI-004: ugoke inbox list --from-ai writes a question line for each question that the list
+//                of inbox-command.fsl shows, and an unreadable line for each run that it cannot
+//                read, which then ends the command with 1. Without questions, it writes nothing.
+// MODEL-FAI-005: Ctrl+C follows run-command.fsl. With the resident process, the command detaches at
+//                once; with its own Worker, it waits for the running step first, and then writes
+//                detached. Ctrl+C before the run starts ends it with a cancelled line. A second
+//                Ctrl+C exits at once without a last line; the lines of steps that came before
+//                stay. A run of its own Worker that detached at a question has no Worker until
+//                ugoke inbox answer --from-ai runs one or ugoke attach follows it, so ugoke inbox
+//                list cannot read it meanwhile.
+requirements FromAi {
+  enum Exit { Running, Zero, One, Three, OneThirty }
+  enum Last { NoLine, StartedLine, QuestionLine, CompletedLine, FailedLine, CancelledLine, DetachedLine, AnsweredLine }
+  actor User, Ugoke, Script, Worker, Peer
+
+  entity AiRun {
+    starts: Bool = false
+    lastLine: Last = NoLine
+    exitCode: Exit = Running
+    lifecycle Typed -> Issued -> Following -> Asked
+    lifecycle Issued -> Failed
+    lifecycle Following -> Following
+    lifecycle Following -> Completed
+    lifecycle Following -> Failed
+    lifecycle Following -> Cancelled
+    lifecycle Following -> Detached
+    lifecycle Issued -> Cancelled
+    lifecycle Following -> Abandoned
+  }
+
+  entity AiAnswer {
+    locked: Bool = false
+    takes: Bool = false
+    lastLine: Last = NoLine
+    exitCode: Exit = Running
+    lifecycle Unsent -> Given -> Answered -> AskedAgain
+    lifecycle Given -> Declined
+    lifecycle Answered -> Answered
+    lifecycle Answered -> Done
+    lifecycle Answered -> Broken
+    lifecycle Answered -> Withdrawn
+    lifecycle Answered -> Left
+    lifecycle Answered -> Quit
+  }
+
+  entity AiList {
+    anyUnreadable: Bool = false
+    exitCode: Exit = Running
+    lifecycle Unlisted -> Listed
+  }
+
+  event issue = User runs AiRun with starts (Typed -> Issued)
+    covers REQ-FAI-001 "--from-ai を付けると、人向けの進み具合の代わりに、1 行に 1 つの JSON を標準出力に出す。ステップの出力は出さない"
+  event start = Ugoke starts AiRun (Issued -> Following)
+    set lastLine = StartedLine
+  event refuse = Ugoke refuses AiRun (Issued -> Failed)
+    set lastLine = FailedLine, exitCode = One
+    covers REQ-FAI-002 "始める前に失敗したときは、人向けのメッセージを標準エラーに出し、標準出力に同じ理由の failed の行を出して、1 で終わる"
+  event waitInWorker = Worker answers AiRun (Following -> Following)
+    covers REQ-FAI-003 "ugoke run --from-ai は、誰かの答えを待つ wait ステップで question の行を出し、実行から切り離れて、3 で終わる。実行は待ち続ける"
+  event ask = Ugoke asks AiRun (Following -> Asked)
+    set lastLine = QuestionLine, exitCode = Three
+    covers REQ-FAI-003 "ugoke run --from-ai は、誰かの答えを待つ wait ステップで question の行を出し、実行から切り離れて、3 で終わる。実行は待ち続ける"
+  event complete = Ugoke completes AiRun (Following -> Completed)
+    set lastLine = CompletedLine, exitCode = Zero
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+  fault event fail = Script fails AiRun (Following -> Failed)
+    set lastLine = FailedLine, exitCode = One
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+  event cancel = Peer cancels AiRun (Following -> Cancelled)
+    set lastLine = CancelledLine, exitCode = OneThirty
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+  event interrupt = User interrupts AiRun (Issued -> Cancelled)
+    set lastLine = CancelledLine, exitCode = OneThirty
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+  event abandon = User abandons AiRun (Following -> Abandoned)
+    set exitCode = OneThirty
+    covers REQ-FAI-008 "2 度目の Ctrl+C ですぐに終了したときは、最後の行を出さずに 130 で終わる"
+  event detach = User detaches AiRun (Following -> Detached)
+    set lastLine = DetachedLine, exitCode = Three
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+
+  event type = User types AiAnswer with locked, takes (Unsent -> Given)
+    covers REQ-FAI-005 "ugoke inbox answer --from-ai は、答えて answered の行を出し、次の質問か終わりまで実行を追いかける。常駐プロセスが動かしていない実行には、自分の Worker で答える"
+  event answer = Ugoke answers AiAnswer (Given -> Answered)
+    set lastLine = AnsweredLine
+  event decline = Ugoke declines AiAnswer (Given -> Declined)
+    set lastLine = FailedLine, exitCode = One
+  event waitAgainInWorker = Worker answersAfter AiAnswer (Answered -> Answered)
+    covers REQ-FAI-005 "ugoke inbox answer --from-ai は、答えて answered の行を出し、次の質問か終わりまで実行を追いかける。常駐プロセスが動かしていない実行には、自分の Worker で答える"
+  event askAgain = Ugoke asksAgain AiAnswer (Answered -> AskedAgain)
+    set lastLine = QuestionLine, exitCode = Three
+    covers REQ-FAI-005 "ugoke inbox answer --from-ai は、答えて answered の行を出し、次の質問か終わりまで実行を追いかける。常駐プロセスが動かしていない実行には、自分の Worker で答える"
+  event completeAfter = Ugoke completesAfter AiAnswer (Answered -> Done)
+    set lastLine = CompletedLine, exitCode = Zero
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+  fault event failAfter = Script failsAfter AiAnswer (Answered -> Broken)
+    set lastLine = FailedLine, exitCode = One
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+  event cancelAfter = Peer cancelsAfter AiAnswer (Answered -> Withdrawn)
+    set lastLine = CancelledLine, exitCode = OneThirty
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+  event detachAfter = User detachesAfter AiAnswer (Answered -> Left)
+    set lastLine = DetachedLine, exitCode = Three
+    covers REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130"
+  event abandonAfter = User abandonsAfter AiAnswer (Answered -> Quit)
+    set exitCode = OneThirty
+    covers REQ-FAI-008 "2 度目の Ctrl+C ですぐに終了したときは、最後の行を出さずに 130 で終わる"
+
+  event list = Ugoke lists AiList with anyUnreadable (Unlisted -> Listed)
+    set exitCode = if input anyUnreadable then One else Zero
+    covers REQ-FAI-007 "ugoke inbox list --from-ai は、質問ごとに question の行を、読めない実行ごとに unreadable の行を出す。unreadable があれば 1 で終わる"
+
+  rule REQ-FAI-002 "始める前に失敗したときは、人向けのメッセージを標準エラーに出し、標準出力に同じ理由の failed の行を出して、1 で終わる" {
+    allow Ugoke starts AiRun only when starts
+    allow Ugoke refuses AiRun only when not starts
+  }
+  rule REQ-FAI-003 "ugoke run --from-ai は、誰かの答えを待つ wait ステップで question の行を出し、実行から切り離れて、3 で終わる。実行は待ち続ける" {
+    AskedLastQuestion: always AiRun in Asked has lastLine == QuestionLine and exitCode == Three
+  }
+  rule REQ-FAI-004 "最後の行と終了ステータスは、question と detached で 3、completed で 0、failed で 1、cancelled で 130" {
+    CompletedLast: always AiRun in Completed has lastLine == CompletedLine and exitCode == Zero
+    FailedLast: always AiRun in Failed has lastLine == FailedLine and exitCode == One
+    CancelledLast: always AiRun in Cancelled has lastLine == CancelledLine and exitCode == OneThirty
+    DetachedLast: always AiRun in Detached has lastLine == DetachedLine and exitCode == Three
+  }
+  rule REQ-FAI-008 "2 度目の Ctrl+C ですぐに終了したときは、最後の行を出さずに 130 で終わる" {
+    AbandonedWithoutEnd: always AiRun in Abandoned has exitCode == OneThirty and lastLine == StartedLine
+    AnswerQuitWithoutEnd: always AiAnswer in Quit has exitCode == OneThirty and lastLine == AnsweredLine
+  }
+  rule REQ-FAI-006 "ほかのプロセスが追いかけている実行と、実行が受け付けない答えには、failed の行を出して 1 で終わる。ステップは待ち続ける" {
+    allow Ugoke answers AiAnswer only when not locked and takes
+    allow Ugoke declines AiAnswer only when locked or not takes
+    AnswerAskedLast: always AiAnswer in AskedAgain has lastLine == QuestionLine and exitCode == Three
+    AnswerCompletedLast: always AiAnswer in Done has lastLine == CompletedLine and exitCode == Zero
+    AnswerFailedLast: always AiAnswer in Declined, Broken has lastLine == FailedLine and exitCode == One
+    AnswerCancelledLast: always AiAnswer in Withdrawn has lastLine == CancelledLine and exitCode == OneThirty
+    AnswerDetachedLast: always AiAnswer in Left has lastLine == DetachedLine and exitCode == Three
+  }
+  rule REQ-FAI-007 "ugoke inbox list --from-ai は、質問ごとに question の行を、読めない実行ごとに unreadable の行を出す。unreadable があれば 1 で終わる" {
+    UnreadableExitsOne: always AiList in Listed has (exitCode == One) == anyUnreadable
+  }
+
+  scenario AC-FAI-001 "最初の質問で、question を出して終わる" {
+    User runs r1 with starts true
+    Ugoke starts r1
+    Ugoke asks r1
+    then stage(r1) == Asked and r1.exitCode == Three
+  }
+  scenario AC-FAI-002 "Worker が答える待ちは、追いかけ続けて完了する" {
+    User runs r1 with starts true
+    Ugoke starts r1
+    Worker answers r1
+    Ugoke completes r1
+    then stage(r1) == Completed and r1.lastLine == CompletedLine
+  }
+  scenario AC-FAI-003 "始める前の失敗は、failed の行で終わる" {
+    User runs r1 with starts false
+    Ugoke refuses r1
+    then stage(r1) == Failed and r1.lastLine == FailedLine and r1.exitCode == One
+  }
+  scenario AC-FAI-004 "取り消されると、cancelled で終わる" {
+    User runs r1 with starts true
+    Ugoke starts r1
+    Peer cancels r1
+    then r1.exitCode == OneThirty
+  }
+  scenario AC-FAI-005 "Ctrl+C で、detached で終わる" {
+    User runs r1 with starts true
+    Ugoke starts r1
+    User detaches r1
+    then r1.lastLine == DetachedLine and r1.exitCode == Three
+  }
+  scenario AC-FAI-006 "答えて、次の質問まで追いかける" {
+    User types a1 with locked false, takes true
+    Ugoke answers a1
+    Ugoke asksAgain a1
+    then stage(a1) == AskedAgain and a1.exitCode == Three
+  }
+  scenario AC-FAI-007 "答えて、終わりまで追いかける" {
+    User types a1 with locked false, takes true
+    Ugoke answers a1
+    Worker answersAfter a1
+    Ugoke completesAfter a1
+    then stage(a1) == Done and a1.exitCode == Zero
+  }
+  scenario AC-FAI-008 "ほかのプロセスが追いかけている実行には、答えない" {
+    User types a1 with locked true, takes true
+    Ugoke declines a1
+    then stage(a1) == Declined and a1.exitCode == One
+  }
+  scenario AC-FAI-009 "受け付けない答えは、failed で終わる" {
+    User types a1 with locked false, takes false
+    Ugoke declines a1
+    then a1.lastLine == FailedLine
+  }
+  scenario AC-FAI-010 "読めない実行があれば、1 で終わる" {
+    Ugoke lists l1 with anyUnreadable true
+    then l1.exitCode == One
+  }
+  scenario AC-FAI-011 "読めない実行がなければ、0 で終わる" {
+    Ugoke lists l1 with anyUnreadable false
+    then l1.exitCode == Zero
+  }
+
+  forbidden FB-FAI-001 "始められないのに、始めない" {
+    User runs r1 with starts false
+    Ugoke starts r1
+    then rejected
+  }
+  forbidden FB-FAI-002 "始められるのに、失敗にしない" {
+    User runs r1 with starts true
+    Ugoke refuses r1
+    then rejected
+  }
+  forbidden FB-FAI-003 "ほかのプロセスが追いかけている実行に、答えない" {
+    User types a1 with locked true, takes true
+    Ugoke answers a1
+    then rejected
+  }
+  forbidden FB-FAI-004 "受け付けない答えで、追いかけない" {
+    User types a1 with locked false, takes false
+    Ugoke answers a1
+    then rejected
+  }
+  forbidden FB-FAI-005 "答えられるのに、断らない" {
+    User types a1 with locked false, takes true
+    Ugoke declines a1
+    then rejected
+  }
+  forbidden FB-FAI-006 "始める前に、質問を出さない" {
+    User runs r1 with starts true
+    Ugoke asks r1
+    then rejected
+  }
+  scenario AC-FAI-012 "始める前に Ctrl+C を押すと、cancelled で終わる" {
+    User runs r1 with starts true
+    User interrupts r1
+    then stage(r1) == Cancelled and r1.lastLine == CancelledLine and r1.exitCode == OneThirty
+  }
+  scenario AC-FAI-013 "2 度目の Ctrl+C では、最後の行を出さない" {
+    User runs r1 with starts true
+    Ugoke starts r1
+    User abandons r1
+    then stage(r1) == Abandoned and r1.lastLine == StartedLine and r1.exitCode == OneThirty
+  }
+  scenario AC-FAI-014 "答えたあと取り消されると、cancelled で終わる" {
+    User types a1 with locked false, takes true
+    Ugoke answers a1
+    Peer cancelsAfter a1
+    then stage(a1) == Withdrawn and a1.exitCode == OneThirty
+  }
+  scenario AC-FAI-015 "答えたあと Ctrl+C で、detached で終わる" {
+    User types a1 with locked false, takes true
+    Ugoke answers a1
+    User detachesAfter a1
+    then a1.lastLine == DetachedLine and a1.exitCode == Three
+  }
+  scenario AC-FAI-016 "答えたあと 2 度目の Ctrl+C では、最後の行を出さない" {
+    User types a1 with locked false, takes true
+    Ugoke answers a1
+    User abandonsAfter a1
+    then stage(a1) == Quit and a1.lastLine == AnsweredLine
+  }
+}
+verify {
+  instances AiRun = 1
+  instances AiAnswer = 1
+  instances AiList = 1
+}

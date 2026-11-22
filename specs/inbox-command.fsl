@@ -23,7 +23,8 @@ fsl 5
 //                typed. --values is a JSON object or the path of a .json
 //                file, as --input is (input-option.fsl). Without --visit, the step that waits now
 //                is answered. The run checks the answer, so a rejected answer leaves the step
-//                waiting. --detach is required, and the command exits after the answer.
+//                waiting. The command exits after the answer with --detach. With --from-ai, it
+//                follows the run instead (from-ai.fsl).
 // MODEL-INB-003: a process that follows the run and asks the step in its terminal, such as ugoke
 //                run or ugoke attach, checks every second whether the step still waits. When
 //                another process answered it, it stops asking, shows "Answered elsewhere" in the
