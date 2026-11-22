@@ -12,6 +12,7 @@ export {
   inputDeclarationDefinitionSchema,
   inputDeclarationSchema,
   inputDeclarationsSchema,
+  workflowInputDeclarationDefinitionSchema,
 } from "./declarations.js";
 export type { InputDeclaration } from "./declarations.js";
 export {
