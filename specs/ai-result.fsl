@@ -1,0 +1,106 @@
+fsl 5
+// Requirements for the references to the result of an AI step: which fields after result.data
+// the outputs of the step may read, as the schema of the step decides before the step runs.
+// Source: docs/reference/workflow-definition.md ("ai ステップ", "式")
+//
+// MODEL-AIR-001: one reference to result.data is checked. Whether the step has a schema, whether
+//                the reference reads a field after data, and, at the schema of that field,
+//                whether it lists properties, whether the field is one of them, and whether it
+//                lets other properties in, are given when the reference is written. A deeper
+//                reference is checked one field at a time in the same way
+//                (packages/core/src/intermediate/expressions.ts, checkAiResult).
+// MODEL-AIR-002: a schema lets other properties in when it has additionalProperties that is not
+//                false, or a keyword that can declare properties outside of properties, such as
+//                $ref, allOf, anyOf, oneOf, if, patternProperties, dependentSchemas, or
+//                unevaluatedProperties. An object without additionalProperties is closed, which
+//                is stricter than JSON Schema, so that a misspelled name is reported early.
+requirements AiResult {
+  actor Author, Ugoke
+
+  entity DataReference {
+    hasSchema: Bool = false
+    field: Bool = false
+    listsProperties: Bool = false
+    listed: Bool = false
+    open: Bool = false
+    lifecycle Unwritten -> Written -> Accepted
+    lifecycle Written -> Rejected
+  }
+
+  def readable(s: Bool, f: Bool, l: Bool, d: Bool, o: Bool) =
+    not f or (s and (not l or d or o))
+
+  event write = Author writes DataReference with hasSchema, field, listsProperties, listed, open (Unwritten -> Written)
+    covers REQ-AIR-001 "ai ステップの outputs は、AI の結果を result.data で参照する"
+  event accept = Ugoke accepts DataReference (Written -> Accepted)
+  event reject = Ugoke rejects DataReference (Written -> Rejected)
+
+  rule REQ-AIR-002 "schema がなければ、result.data はテキストで、その中の項目は参照できない" {
+    never Ugoke accepts DataReference when not hasSchema and field
+  }
+  rule REQ-AIR-003 "schema があれば、properties にない項目は参照できない。ただし、ほかの項目を入れられる schema なら参照できる" {
+    never Ugoke accepts DataReference when hasSchema and field and listsProperties and not listed and not open
+  }
+  rule REQ-AIR-004 "properties を書いていない schema の項目は、実行するまでわからないので、参照できる" {
+    never Ugoke rejects DataReference when hasSchema and field and not listsProperties
+  }
+  rule REQ-AIR-005 "参照できる項目は受け付け、そうでなければ拒む" {
+    allow Ugoke accepts DataReference only when readable(hasSchema, field, listsProperties, listed, open)
+    allow Ugoke rejects DataReference only when not readable(hasSchema, field, listsProperties, listed, open)
+  }
+
+  scenario AC-AIR-001 "schema がなくても、result.data は参照できる" {
+    Author writes d1 with hasSchema false, field false, listsProperties false, listed false, open false
+    Ugoke accepts d1
+    then d1 is Accepted
+  }
+  scenario AC-AIR-002 "schema の properties にある項目を参照する" {
+    Author writes d1 with hasSchema true, field true, listsProperties true, listed true, open false
+    Ugoke accepts d1
+    then d1 is Accepted
+  }
+  scenario AC-AIR-003 "schema の properties にない項目は、拒む" {
+    Author writes d1 with hasSchema true, field true, listsProperties true, listed false, open false
+    Ugoke rejects d1
+    then d1 is Rejected
+  }
+  scenario AC-AIR-004 "ほかの項目を入れられる schema なら、properties にない項目も参照できる" {
+    Author writes d1 with hasSchema true, field true, listsProperties true, listed false, open true
+    Ugoke accepts d1
+    then d1 is Accepted
+  }
+  scenario AC-AIR-005 "schema がなければ、result.data の中の項目は拒む" {
+    Author writes d1 with hasSchema false, field true, listsProperties false, listed false, open false
+    Ugoke rejects d1
+    then d1 is Rejected
+  }
+
+  forbidden FB-AIR-001 "schema がないのに、result.data の中の項目を受け付けない" {
+    Author writes d1 with hasSchema false, field true, listsProperties false, listed false, open false
+    Ugoke accepts d1
+    then rejected
+  }
+  forbidden FB-AIR-002 "properties にない項目を、閉じた schema で受け付けない" {
+    Author writes d1 with hasSchema true, field true, listsProperties true, listed false, open false
+    Ugoke accepts d1
+    then rejected
+  }
+  forbidden FB-AIR-003 "properties を書いていない schema の項目を、拒まない" {
+    Author writes d1 with hasSchema true, field true, listsProperties false, listed false, open false
+    Ugoke rejects d1
+    then rejected
+  }
+  forbidden FB-AIR-004 "result.data そのものを、拒まない" {
+    Author writes d1 with hasSchema true, field false, listsProperties true, listed false, open false
+    Ugoke rejects d1
+    then rejected
+  }
+  forbidden FB-AIR-005 "ほかの項目を入れられる schema の項目を、拒まない" {
+    Author writes d1 with hasSchema true, field true, listsProperties true, listed false, open true
+    Ugoke rejects d1
+    then rejected
+  }
+}
+verify {
+  instances DataReference = 1
+}

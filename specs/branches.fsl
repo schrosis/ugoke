@@ -1,0 +1,145 @@
+fsl 5
+// Requirements for the branches of a step: next written as a list of if and to, which branch the
+// run takes after the step, and which lists are errors.
+// Source: docs/reference/workflow-definition.md ("分岐")
+//
+// MODEL-BRN-001: a list has one to three branches. Which branches have if is given when the
+//                definition is written. Where each branch goes is in workflow-transitions.fsl.
+// MODEL-BRN-002: whether the conditions of the first two branches hold, and whether evaluating
+//                them fails, are given when the step has succeeded. The conditions themselves are
+//                in condition.fsl. A condition after the one that holds is not evaluated.
+// MODEL-BRN-003: one reference to the outputs of an earlier step is modeled for a run. Whether
+//                the step ran, which a branch decides, is given when the reference is evaluated.
+requirements Branches {
+  number Index
+  actor Author, Ugoke, Worker
+
+  entity BranchList {
+    count: Index = 1
+    if0: Bool = false
+    if1: Bool = false
+    if2: Bool = false
+    holds0: Bool = false
+    holds1: Bool = false
+    taken: Index = 0
+    lifecycle Unwritten -> Written -> Accepted -> Taken
+    lifecycle Written -> Invalid
+    lifecycle Accepted -> Failed
+  }
+
+  // The last branch has no if, and every other branch has one.
+  entity StepValue {
+    ran: Bool = false
+    isNull: Bool = false
+    lifecycle Unread -> Read
+  }
+
+  def wellFormed(n: Index, a: Bool, b: Bool, c: Bool) =
+    (n == 1 and not a) or (n == 2 and a and not b) or (n == 3 and a and b and not c)
+
+  // The first branch whose condition holds, or the last branch.
+  def firstHolding(n: Index, h0: Bool, h1: Bool) =
+    if n >= 2 and h0 then 0 else if n == 3 and h1 then 1 else n - 1
+
+  event write = Author writes BranchList with count, if0, if1, if2 (Unwritten -> Written)
+    covers REQ-BRN-001 "next に分岐の一覧を書くと、ステップのあとで上から順に条件を確かめ、最初に成り立つ分岐の行き先に進む"
+  event accept = Ugoke accepts BranchList (Written -> Accepted)
+  event reject = Ugoke rejects BranchList (Written -> Invalid)
+  event take = Worker takes BranchList with holds0, holds1, taken (Accepted -> Taken)
+    covers REQ-BRN-001 "next に分岐の一覧を書くと、ステップのあとで上から順に条件を確かめ、最初に成り立つ分岐の行き先に進む"
+  event fail = Worker fails BranchList (Accepted -> Failed)
+    covers REQ-BRN-004 "条件の評価に失敗すると、ステップは失敗する"
+
+  event read = Worker reads StepValue with ran, isNull (Unread -> Read)
+    covers REQ-BRN-005 "別の分岐で動かなかったステップの outputs を参照すると、その値は null"
+
+  rule REQ-BRN-005 "別の分岐で動かなかったステップの outputs を参照すると、その値は null" {
+    allow Worker reads StepValue only when input ran or input isNull
+    SkippedIsNull: always StepValue in Read has (ran or isNull)
+  }
+  rule REQ-BRN-002 "最後の分岐には if を書かない。それ以外の分岐には if を書く。そうでなければ、定義のエラー" {
+    allow Author writes BranchList only when input count >= 1 and input count <= 3
+    allow Ugoke accepts BranchList only when wellFormed(count, if0, if1, if2)
+    allow Ugoke rejects BranchList only when not wellFormed(count, if0, if1, if2)
+    AcceptedIsWellFormed: always BranchList in Taken, Failed has wellFormed(count, if0, if1, if2)
+  }
+  rule REQ-BRN-003 "条件が成り立つ最初の分岐の行き先に進む。どれも成り立たなければ、最後の分岐の行き先に進む" {
+    allow Worker takes BranchList only when input taken == firstHolding(count, input holds0, input holds1)
+    TakesFirstHolding: always BranchList in Taken has taken == firstHolding(count, holds0, holds1)
+  }
+
+  scenario AC-BRN-001 "最初の条件が成り立てば、最初の分岐の行き先に進む" {
+    Author writes b1 with count 2, if0 true, if1 false, if2 false
+    Ugoke accepts b1
+    Worker takes b1 with holds0 true, holds1 false, taken 0
+    then b1 is Taken
+  }
+  scenario AC-BRN-002 "どの条件も成り立たなければ、最後の分岐の行き先に進む" {
+    Author writes b1 with count 3, if0 true, if1 true, if2 false
+    Ugoke accepts b1
+    Worker takes b1 with holds0 false, holds1 false, taken 2
+    then b1 is Taken
+  }
+  scenario AC-BRN-003 "2 つ目の条件だけが成り立てば、2 つ目の分岐の行き先に進む" {
+    Author writes b1 with count 3, if0 true, if1 true, if2 false
+    Ugoke accepts b1
+    Worker takes b1 with holds0 false, holds1 true, taken 1
+    then b1 is Taken
+  }
+  scenario AC-BRN-004 "最後の分岐に if を書くと、定義のエラーになる" {
+    Author writes b1 with count 2, if0 true, if1 true, if2 false
+    Ugoke rejects b1
+    then b1 is Invalid
+  }
+  scenario AC-BRN-005 "条件の評価に失敗すると、ステップは失敗する" {
+    Author writes b1 with count 2, if0 true, if1 false, if2 false
+    Ugoke accepts b1
+    Worker fails b1
+    then b1 is Failed
+  }
+
+  forbidden FB-BRN-001 "最後の分岐に if がある一覧を、受け付けない" {
+    Author writes b1 with count 1, if0 true, if1 false, if2 false
+    Ugoke accepts b1
+    then rejected
+  }
+  forbidden FB-BRN-002 "最後でない分岐に if がない一覧を、受け付けない" {
+    Author writes b1 with count 3, if0 true, if1 false, if2 false
+    Ugoke accepts b1
+    then rejected
+  }
+  forbidden FB-BRN-003 "決まりに合う一覧を、拒まない" {
+    Author writes b1 with count 1, if0 false, if1 false, if2 false
+    Ugoke rejects b1
+    then rejected
+  }
+  forbidden FB-BRN-004 "あとの分岐の条件が成り立っても、先に成り立つ分岐を飛ばさない" {
+    Author writes b1 with count 3, if0 true, if1 true, if2 false
+    Ugoke accepts b1
+    Worker takes b1 with holds0 true, holds1 true, taken 1
+    then rejected
+  }
+  forbidden FB-BRN-005 "どれも成り立たないのに、最後でない分岐に進まない" {
+    Author writes b1 with count 2, if0 true, if1 false, if2 false
+    Ugoke accepts b1
+    Worker takes b1 with holds0 false, holds1 false, taken 0
+    then rejected
+  }
+  forbidden FB-BRN-007 "動かなかったステップの値を、null 以外にしない" {
+    Worker reads v1 with ran false, isNull false
+    then rejected
+  }
+  scenario AC-BRN-006 "動かなかったステップの値は null" {
+    Worker reads v1 with ran false, isNull true
+    then v1 is Read
+  }
+  forbidden FB-BRN-006 "分岐のない一覧は、書けない" {
+    Author writes b1 with count 0, if0 false, if1 false, if2 false
+    then rejected
+  }
+}
+verify {
+  instances BranchList = 1
+  instances StepValue = 1
+  values Index = 0..3
+}

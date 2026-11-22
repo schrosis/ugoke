@@ -1,0 +1,159 @@
+fsl 5
+// Requirements for continueOnError: a script or an AI step that fails returns the failure as its
+// result, and the workflow goes on, unless the failure is a mistake of the definition, values that
+// are too large to send, or a cancellation.
+// Source: docs/reference/workflow-definition.md ("失敗しても続ける", "式")
+//
+// MODEL-COE-001: one failure of a script or an AI step is modeled. The kind of the step, why it
+//                failed, and whether it has continueOnError are given when it fails. Exited is a
+//                script that ended with a status other than 0, or an AI that failed, such as one
+//                that finished without the structured result of a schema, or whose provider refused
+//                the evaluated with. TimedOut is a step past its timeout. NotRun is a step that
+//                could not start, such as when the dotenv file cannot be read. TooLargeOut is
+//                outputs over 512 KiB. BadExpression is an expression that cannot be evaluated in
+//                run, prompt, env, with, outputs, or a condition, such as a field of result.data
+//                that properties of the schema does not declare and the result of the AI does not
+//                have (ai-step.fsl, REQ-AIS-007). A condition that references env and cannot read
+//                the environment, such as when the dotenv file cannot be read, is BadExpression
+//                too, even when the script of the step went on without the file. TooLargeIn is
+//                received values over 512 KiB, which the workflow checks before the step starts. A
+//                Worker without an AI runner, which the CLI never has, stops the workflow like
+//                BadExpression.
+// MODEL-COE-002: for the workflow, a step that continues ends like one that succeeded, and goes to
+//                its next step (workflow-run.fsl, interpret-workflow.fsl). The progress marks the
+//                failed step as continued (step-progress.fsl).
+// MODEL-COE-003: a step that succeeds has result.ok true and result.error null, with or without
+//                continueOnError (step-references.fsl, REQ-REF-012).
+// MODEL-COE-004: a failed AI step that continues returns no session, so the session of the step
+//                stays the one of its last visit that returned one. With session: reuse, its next
+//                visit continues that session, or starts a new one when there is none (ai-step.fsl,
+//                REQ-AIS-004).
+requirements ContinueOnError {
+  enum Kind { ScriptStep, AiStep }
+  enum Cause { Exited, TimedOut, NotRun, TooLargeOut, BadExpression, TooLargeIn, Interrupted }
+  actor Worker
+
+  entity Failure {
+    kind: Kind = ScriptStep
+    cause: Cause = Exited
+    continues: Bool = false
+    ok: Bool = true
+    hasError: Bool = false
+    exitKnown: Bool = true
+    outputKept: Bool = true
+    dataNull: Bool = false
+    outputsNull: Bool = false
+    lifecycle Running -> Failed -> Continued
+    lifecycle Failed -> Stopped
+    lifecycle Failed -> Cancelled
+  }
+
+  def continuable(c: Cause) = c == Exited or c == TimedOut or c == NotRun or c == TooLargeOut
+  def ended(c: Cause) = if c == TimedOut or c == NotRun then false else true
+  def isAi(k: Kind) = if k == AiStep then true else false
+  def tooLarge(c: Cause) = if c == TooLargeOut then true else false
+
+  event fail = Worker fails Failure with kind, cause, continues (Running -> Failed)
+    covers REQ-COE-001 "script ステップと ai ステップに continueOnError: true を書くと、失敗しても、ワークフローは next に進む。wait ステップには書けない"
+  event goOn = Worker continues Failure (Failed -> Continued)
+    set ok = false, hasError = true, exitKnown = ended(cause), outputKept = ended(cause),
+      dataNull = isAi(kind), outputsNull = tooLarge(cause)
+  event stop = Worker stops Failure (Failed -> Stopped)
+  event cancel = Worker cancels Failure (Failed -> Cancelled)
+
+  rule REQ-COE-002 "続けるのは、continueOnError があり、ステップ自身が失敗したとき。スクリプトや AI の失敗、timeout、動かせなかったとき、出す値が大きすぎたとき" {
+    allow Worker continues Failure only when continues and continuable(cause)
+  }
+  rule REQ-COE-003 "continueOnError がないとき、式を評価できないとき、受け取る値が大きすぎたときは、ワークフローは失敗する。取り消したステップは、取り消しで終わる" {
+    allow Worker stops Failure only when cause != Interrupted and (not continues or not continuable(cause))
+    allow Worker cancels Failure only when cause == Interrupted
+  }
+  rule REQ-COE-004 "続けたステップの result.ok は false で、result.error は失敗した理由" {
+    ContinuedFailed: always Failure in Continued has (not ok and hasError)
+  }
+  rule REQ-COE-005 "timeout を過ぎたときと、動かせなかったときは、result.exitCode は null で、result.stdout と result.stderr は空。途中まで出した出力も入らない" {
+    NoExitWithoutEnd: always Failure in Continued has (exitKnown == ended(cause))
+    NoOutputWithoutEnd: always Failure in Continued has (outputKept == ended(cause))
+  }
+  rule REQ-COE-006 "続けた ai ステップの result.data は null で、その中の項目も null" {
+    AiDataNull: always Failure in Continued has (dataNull == isAi(kind))
+  }
+  rule REQ-COE-007 "出す値が 512 KiB を超えて続けたときは、outputs はすべて null" {
+    TooLargeNull: always Failure in Continued has (outputsNull == tooLarge(cause))
+  }
+
+  scenario AC-COE-001 "失敗したスクリプトでも、続ける" {
+    Worker fails f1 with kind ScriptStep, cause Exited, continues true
+    Worker continues f1
+    then stage(f1) == Continued and not f1.ok and f1.exitKnown and f1.outputKept
+  }
+  scenario AC-COE-002 "timeout を過ぎても続け、終了ステータスと出力はない" {
+    Worker fails f1 with kind ScriptStep, cause TimedOut, continues true
+    Worker continues f1
+    then stage(f1) == Continued and not f1.exitKnown and not f1.outputKept
+  }
+  scenario AC-COE-003 "動かせなかったスクリプトでも、続ける" {
+    Worker fails f1 with kind ScriptStep, cause NotRun, continues true
+    Worker continues f1
+    then stage(f1) == Continued and not f1.exitKnown
+  }
+  scenario AC-COE-004 "失敗した ai ステップは、result.data が null で続ける" {
+    Worker fails f1 with kind AiStep, cause Exited, continues true
+    Worker continues f1
+    then stage(f1) == Continued and f1.dataNull
+  }
+  scenario AC-COE-005 "出す値が大きすぎたら、outputs をすべて null にして続ける" {
+    Worker fails f1 with kind ScriptStep, cause TooLargeOut, continues true
+    Worker continues f1
+    then stage(f1) == Continued and f1.outputsNull
+  }
+  scenario AC-COE-006 "continueOnError がなければ、ワークフローは失敗する" {
+    Worker fails f1 with kind ScriptStep, cause Exited, continues false
+    Worker stops f1
+    then f1 is Stopped
+  }
+  scenario AC-COE-007 "受け取る値が大きすぎたら、continueOnError があっても失敗する" {
+    Worker fails f1 with kind ScriptStep, cause TooLargeIn, continues true
+    Worker stops f1
+    then f1 is Stopped
+  }
+  scenario AC-COE-008 "取り消したステップは、continueOnError があっても取り消しで終わる" {
+    Worker fails f1 with kind AiStep, cause Interrupted, continues true
+    Worker cancels f1
+    then f1 is Cancelled
+  }
+
+  forbidden FB-COE-001 "式を評価できないのに、続けない" {
+    Worker fails f1 with kind AiStep, cause BadExpression, continues true
+    Worker continues f1
+    then rejected
+  }
+  forbidden FB-COE-002 "continueOnError がないのに、続けない" {
+    Worker fails f1 with kind ScriptStep, cause Exited, continues false
+    Worker continues f1
+    then rejected
+  }
+  forbidden FB-COE-003 "取り消したステップを、続けない" {
+    Worker fails f1 with kind ScriptStep, cause Interrupted, continues true
+    Worker continues f1
+    then rejected
+  }
+  forbidden FB-COE-004 "続けられる失敗で、ワークフローを止めない" {
+    Worker fails f1 with kind ScriptStep, cause TimedOut, continues true
+    Worker stops f1
+    then rejected
+  }
+  forbidden FB-COE-005 "受け取る値が大きすぎるのに、続けない" {
+    Worker fails f1 with kind ScriptStep, cause TooLargeIn, continues true
+    Worker continues f1
+    then rejected
+  }
+  forbidden FB-COE-006 "取り消したステップを、失敗にしない" {
+    Worker fails f1 with kind ScriptStep, cause Interrupted, continues false
+    Worker stops f1
+    then rejected
+  }
+}
+verify {
+  instances Failure = 1
+}

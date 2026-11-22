@@ -1,0 +1,172 @@
+fsl 5
+// Requirements for finding the project and the file of a workflow.
+// Source: docs/guide/project.md, docs/reference/commands/validate.md
+//
+// MODEL-PRJ-001: the directory where a command runs is level 3, and its parents are levels 2,
+//                1 and 0. Level 0 has no parent.
+// MODEL-PRJ-002: a workflow name is either valid or not, and the definition files are described
+//                by whether the .yaml and the .yml file exist.
+requirements ProjectFiles {
+  number Level
+  actor User, Ugoke
+
+  entity Command {
+    u0: Bool = false
+    u1: Bool = false
+    u2: Bool = false
+    u3: Bool = false
+    validName: Bool = false
+    yaml: Bool = false
+    yml: Bool = false
+    root: Level = 0
+    lifecycle Typed -> Issued -> Located -> Resolved
+    lifecycle Issued -> BadName
+    lifecycle Issued -> NoProject
+    lifecycle Located -> NoWorkflow
+    lifecycle Located -> Ambiguous
+  }
+
+  // u0 to u3 tell whether the directory at each level has .ugoke.
+  def hasUgoke(u0: Bool, u1: Bool, u2: Bool, u3: Bool, x: Level) =
+    (x == 0 and u0) or (x == 1 and u1) or (x == 2 and u2) or (x == 3 and u3)
+
+  // No directory between the one where the command runs and level x has .ugoke.
+  def noneCloser(u0: Bool, u1: Bool, u2: Bool, u3: Bool, x: Level) =
+    forall y: Level { y > x => not hasUgoke(u0, u1, u2, u3, y) }
+
+  def anyUgoke(u0: Bool, u1: Bool, u2: Bool, u3: Bool) = u0 or u1 or u2 or u3
+
+  event issue = User runs Command with u0, u1, u2, u3, validName, yaml, yml (Typed -> Issued)
+    covers REQ-PRJ-004 "ワークフローは、名前で指定する"
+  event rejectName = Ugoke rejects Command (Issued -> BadName)
+  event locate = Ugoke locates Command with root (Issued -> Located)
+  event noProject = Ugoke abandons Command (Issued -> NoProject)
+  event resolve = Ugoke resolves Command (Located -> Resolved)
+  event missing = Ugoke misses Command (Located -> NoWorkflow)
+  event ambiguous = Ugoke doubts Command (Located -> Ambiguous)
+
+  rule REQ-PRJ-001 "コマンドを実行したディレクトリから上へたどり、.ugoke のある最も近いディレクトリを、プロジェクトのルートにする" {
+    allow Ugoke locates Command only when
+      validName and hasUgoke(u0, u1, u2, u3, input root) and noneCloser(u0, u1, u2, u3, input root)
+  }
+  rule REQ-PRJ-002 "どのディレクトリにも .ugoke がなければ、エラーになる" {
+    allow Ugoke abandons Command only when validName and not anyUgoke(u0, u1, u2, u3)
+  }
+  rule REQ-PRJ-003 "決まりに合わない名前は、プロジェクトを探す前にエラーになる" {
+    allow Ugoke rejects Command only when not validName
+  }
+  rule REQ-PRJ-005 "名前に合う .yaml か .yml の定義を使う" {
+    allow Ugoke resolves Command only when yaml != yml
+  }
+  rule REQ-PRJ-006 "同じ名前の .yaml と .yml のどちらもないときは、エラーになる" {
+    allow Ugoke misses Command only when not yaml and not yml
+  }
+  rule REQ-PRJ-007 "同じ名前の .yaml と .yml の両方があるときは、エラーになる" {
+    allow Ugoke doubts Command only when yaml and yml
+  }
+  rule REQ-PRJ-008 "プロジェクトのルートは、.ugoke のある最も近いディレクトリ" {
+    RootIsNearest: always Command in Located, Resolved, NoWorkflow, Ambiguous has
+      hasUgoke(u0, u1, u2, u3, root) and noneCloser(u0, u1, u2, u3, root)
+  }
+
+  scenario AC-PRJ-001 "サブディレクトリで実行しても、上のプロジェクトのワークフローを使う" {
+    User runs c1 with u0 false, u1 true, u2 false, u3 false, validName true, yaml true, yml false
+    Ugoke locates c1 with root 1
+    Ugoke resolves c1
+    then c1 is Resolved
+  }
+  scenario AC-PRJ-002 "決まりに合わない名前は、名前のエラーになる" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName false, yaml true, yml false
+    Ugoke rejects c1
+    then c1 is BadName
+  }
+  scenario AC-PRJ-003 "どのディレクトリにも .ugoke がなければ、エラーになる" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 false, validName true, yaml true, yml false
+    Ugoke abandons c1
+    then c1 is NoProject
+  }
+  scenario AC-PRJ-004 ".yaml と .yml のどちらもなければ、エラーになる" {
+    User runs c1 with u0 true, u1 false, u2 false, u3 false, validName true, yaml false, yml false
+    Ugoke locates c1 with root 0
+    Ugoke misses c1
+    then c1 is NoWorkflow
+  }
+  scenario AC-PRJ-005 ".yaml と .yml の両方があれば、エラーになる" {
+    User runs c1 with u0 true, u1 false, u2 true, u3 false, validName true, yaml true, yml true
+    Ugoke locates c1 with root 2
+    Ugoke doubts c1
+    then c1 is Ambiguous
+  }
+  scenario AC-PRJ-006 "実行したディレクトリをルートにして、.yml の定義を使う" {
+    User runs c1 with u0 true, u1 true, u2 true, u3 true, validName true, yaml false, yml true
+    Ugoke locates c1 with root 3
+    Ugoke resolves c1
+    then c1 is Resolved
+  }
+
+  forbidden FB-PRJ-001 "より近い .ugoke があるときは、遠い方をルートにしない" {
+    User runs c1 with u0 true, u1 false, u2 true, u3 false, validName true, yaml true, yml false
+    Ugoke locates c1 with root 0
+    then rejected
+  }
+  forbidden FB-PRJ-002 ".ugoke があるときは、見つからないことにしない" {
+    User runs c1 with u0 false, u1 false, u2 true, u3 false, validName true, yaml true, yml false
+    Ugoke abandons c1
+    then rejected
+  }
+  forbidden FB-PRJ-003 "決まりに合わない名前で、プロジェクトを探さない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName false, yaml true, yml false
+    Ugoke locates c1 with root 3
+    then rejected
+  }
+  forbidden FB-PRJ-004 "決まりに合う名前を、名前のエラーにしない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName true, yaml true, yml false
+    Ugoke rejects c1
+    then rejected
+  }
+  forbidden FB-PRJ-005 "両方あるときは、どちらかを使わない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName true, yaml true, yml true
+    Ugoke locates c1 with root 3
+    Ugoke resolves c1
+    then rejected
+  }
+  forbidden FB-PRJ-006 "ファイルがあるときは、見つからないことにしない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName true, yaml false, yml true
+    Ugoke locates c1 with root 3
+    Ugoke misses c1
+    then rejected
+  }
+  forbidden FB-PRJ-007 "片方だけのときは、両方あることにしない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName true, yaml true, yml false
+    Ugoke locates c1 with root 3
+    Ugoke doubts c1
+    then rejected
+  }
+  forbidden FB-PRJ-008 "ルートを決めたあとに、もう一度探さない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName true, yaml true, yml false
+    Ugoke locates c1 with root 3
+    Ugoke locates c1 with root 3
+    then rejected
+  }
+  forbidden FB-PRJ-009 "実行したコマンドを、もう一度実行しない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName true, yaml true, yml false
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName true, yaml true, yml false
+    then rejected
+  }
+  forbidden FB-PRJ-010 "名前のエラーを、2 度出さない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 true, validName false, yaml true, yml false
+    Ugoke rejects c1
+    Ugoke rejects c1
+    then rejected
+  }
+  forbidden FB-PRJ-011 "プロジェクトがないエラーを、2 度出さない" {
+    User runs c1 with u0 false, u1 false, u2 false, u3 false, validName true, yaml true, yml false
+    Ugoke abandons c1
+    Ugoke abandons c1
+    then rejected
+  }
+}
+verify {
+  instances Command = 1
+  values Level = 0..3
+}

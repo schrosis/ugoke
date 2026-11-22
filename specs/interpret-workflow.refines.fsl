@@ -1,0 +1,29 @@
+fsl 5
+// refine: interpret-workflow.fsl workflow-run.fsl
+//
+// The interpreter keeps the run requirements: it moves to next only after a step succeeds, ends
+// after the step whose next is end, and stops at the first failure.
+refinement InterpretWorkflowRefinesWorkflowRun {
+  impl InterpretWorkflow
+  abs WorkflowRun
+
+  map run_stage[d: Run] =
+    if phase[d] == Executing then Running
+    else if phase[d] == Succeeded then Completed
+    else if phase[d] == Aborted then Failed
+    else if phase[d] == Withdrawn then Cancelled
+    else Waiting
+  map run_executed[d: Run] = executed[d]
+
+  action fill(d, p, n, c) -> stutter
+  action aim(d, s) -> stutter
+  action refuse(d) -> stutter
+  action load(d) -> start(d)
+  action succeed(d, k) -> advance(d)
+  action exceed(d, k) -> fail(d)
+  action succeedLast(d, k) -> complete(d)
+  action exitNonzero(d) -> fail(d)
+  action timeOut(d) -> fail(d)
+  action loseWorker(d) -> fail(d)
+  action withdraw(d) -> cancel(d)
+}

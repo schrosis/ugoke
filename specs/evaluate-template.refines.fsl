@@ -1,0 +1,50 @@
+fsl 5
+// refine: evaluate-template.fsl template-values.fsl
+//
+// The evaluation of a template keeps the requirements of its value: a whole expression keeps the
+// type of the value, and a mixed template is a string that embeds the value.
+refinement EvaluateTemplateRefinesTemplateValues {
+  impl EvaluateTemplate
+  abs TemplateValues
+
+  map template_stage[t: Template] =
+    if phase[t] == Empty then Unwritten else if phase[t] == Parsed then Written else Evaluated
+  map template_whole[t: Template] = single[t]
+  map template_textOnly[t: Template] = textOnly[t]
+  map template_kind[t: Template] =
+    if referenced[t] == Str then TextKind
+    else if referenced[t] == Num then NumberKind
+    else if referenced[t] == Bool then BooleanKind
+    else if referenced[t] == Null then NullKind
+    else if referenced[t] == Obj then ObjectKind
+    else NoKind
+  map template_produced[t: Template] =
+    if result[t] == Str then TextKind
+    else if result[t] == Num then NumberKind
+    else if result[t] == Bool then BooleanKind
+    else if result[t] == Null then NullKind
+    else if result[t] == Obj then ObjectKind
+    else NoKind
+  map template_embedding[t: Template] =
+    if form[t] == Plain then AsIs
+    else if form[t] == Nothing then AsEmpty
+    else if form[t] == Json then AsJson
+    else NoEmbedding
+
+  action parse(t, s, x, v) -> write(
+    t,
+    s,
+    x,
+    if v == Str then TextKind else if v == Num then NumberKind else if v == Bool then BooleanKind
+      else if v == Null then NullKind else ObjectKind)
+  action returnValue(t, r) -> evaluate(
+    t,
+    if r == Str then TextKind else if r == Num then NumberKind else if r == Bool then BooleanKind
+      else if r == Null then NullKind else ObjectKind,
+    NoEmbedding)
+  action join(t, f) -> evaluate(
+    t,
+    TextKind,
+    if f == Plain then AsIs else if f == Nothing then AsEmpty else AsJson)
+  action rest(t) -> stutter
+}

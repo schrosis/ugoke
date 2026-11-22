@@ -1,0 +1,269 @@
+fsl 5
+// Requirements for ugoke attach and ugoke cancel: how they select a run of the project, and how
+// they end.
+// Source: docs/reference/commands/attach.md, docs/reference/commands/cancel.md,
+//         docs/guide/run.md ("実行に戻る", "取り消す")
+//
+// MODEL-ATT-001: whether an ID is given, whether a running run of the project has it, whether
+//                the project has running runs, whether a run is selected in the terminal, whether
+//                another process follows the run, and whether a process runs its steps are given
+//                when the command is typed. A run is chosen when the ID names a running run, or,
+//                without an ID, when one is selected. A run is locked when a running process
+//                follows it. The lock that a stopped process left is taken over.
+//                A project is told apart by its real path, so a project reached through a
+//                symbolic link has the same runs.
+// MODEL-ATT-002: how a followed run ends (completed, failed, detached, cancelled) is described in
+//                run-command.fsl. Here, every ending is one event with its exit code.
+// MODEL-ATT-003: the processes that follow a run and the lock between them are designed in
+//                follow-lock.fsl.
+// MODEL-ATT-004: whether the run was started by workflow code of the same version, and whether
+//                --force is given, are given when the command is typed. A run that records no
+//                version is not of the same version.
+// MODEL-ATT-005: the server is chosen as for ugoke run (run-command.fsl). Without --address and
+//                temporal.address, a resident process that does not run or cannot be reached
+//                leaves no server to open, which is lose (REQ-ATT-010). A resident process of
+//                another version is not asked to run the steps, so workerRuns tells whether a
+//                process runs them still. A problem in the configuration file of the project
+//                (project-config.fsl) is lose too.
+requirements AttachCancel {
+  enum Action { Attach, Cancel }
+  enum Exit { Pending, Zero, One, Three, OneThirty }
+  actor User, Ugoke
+
+  entity Command {
+    which: Action = Attach
+    idGiven: Bool = false
+    idKnown: Bool = false
+    runsExist: Bool = false
+    selected: Bool = false
+    locked: Bool = false
+    workerRuns: Bool = false
+    compatible: Bool = false
+    force: Bool = false
+    runsSteps: Bool = false
+    fromStart: Bool = false
+    startDefinition: Bool = false
+    exitCode: Exit = Pending
+    lifecycle Untyped -> Typed -> Following -> Ended
+    lifecycle Typed -> Refused
+    lifecycle Typed -> Empty
+    lifecycle Typed -> Cancelled
+    lifecycle Typed -> Interrupted
+    lifecycle Typed -> Terminated
+  }
+
+  def chosen(i: Bool, k: Bool, r: Bool, s: Bool) = if i then k else r and s
+  def nothing(i: Bool, r: Bool) = not i and not r
+
+  event type = User types Command with which, idGiven, idKnown, runsExist, selected, locked, workerRuns, compatible, force (Untyped -> Typed)
+    covers REQ-ATT-001 "ugoke attach と ugoke cancel は、実行の ID か、ターミナルでの選択で、プロジェクトのまだ終わっていない実行を選ぶ"
+  event refuse = Ugoke refuses Command (Typed -> Refused)
+    set exitCode = One
+  event empty = Ugoke empties Command (Typed -> Empty)
+    set exitCode = Zero
+  event follow = Ugoke follows Command with runsSteps, fromStart, startDefinition (Typed -> Following)
+  event finish = Ugoke finishes Command with exitCode (Following -> Ended)
+  event cancel = Ugoke cancels Command (Typed -> Cancelled)
+    set exitCode = Zero
+  event lose = Ugoke loses Command (Typed -> Refused)
+    set exitCode = One
+    covers REQ-ATT-010 "使う Temporal Server を開けないときは、終了ステータス 1 で終わる"
+  event terminate = Ugoke terminates Command (Typed -> Terminated)
+    set exitCode = Zero
+  event interrupt = User interrupts Command (Typed -> Interrupted)
+    set exitCode = OneThirty
+    covers REQ-ATT-009 "実行を選ぶ前や、サーバーにつないでいるあいだに Ctrl+C を押すと、終了ステータス 130 で終わる"
+
+  rule REQ-ATT-002 "指定した ID の実行がないとき、実行を選ばなかったときは、終了ステータス 1 で終わる" {
+    allow Ugoke refuses Command only when (not nothing(idGiven, runsExist) and not chosen(idGiven, idKnown, runsExist, selected))
+      or (which == Attach and chosen(idGiven, idKnown, runsExist, selected) and locked)
+      or (which == Attach and chosen(idGiven, idKnown, runsExist, selected) and not compatible and not force)
+    RefusedExitsOne: always Command in Refused has exitCode == One
+  }
+  rule REQ-ATT-003 "選べる実行がないときは、そのことを表示して終了ステータス 0 で終わる" {
+    allow Ugoke empties Command only when nothing(idGiven, runsExist)
+  }
+  rule REQ-ATT-004 "1 つの実行を追いかけられるのは 1 つのプロセスだけ。ほかのプロセスが追いかけている実行には、attach で戻れない" {
+    allow Ugoke follows Command only when which == Attach and chosen(idGiven, idKnown, runsExist, selected) and not locked
+  }
+  rule REQ-ATT-005 "実行のステップを動かしているプロセスがなければ、attach がステップを実行する" {
+    allow Ugoke follows Command only when input runsSteps == not workerRuns
+    StepsRunSomewhere: always Command in Following has (runsSteps or workerRuns)
+  }
+  rule REQ-ATT-008 "attach で戻ると、実行の始めからの進捗を表示する" {
+    allow Ugoke follows Command only when input fromStart
+    ShownFromStart: always Command in Following has fromStart
+  }
+  rule REQ-ATT-009 "実行を選ぶ前や、サーバーにつないでいるあいだに Ctrl+C を押すと、終了ステータス 130 で終わる" {
+    InterruptedExits130: always Command in Interrupted has exitCode == OneThirty
+  }
+  rule REQ-ATT-011 "戻った実行は、始めたときの定義のまま続く。あとで定義のファイルを変えても、動いている実行には効かない" {
+    allow Ugoke follows Command only when input startDefinition
+    KeepsStartDefinition: always Command in Following has startDefinition
+  }
+  rule REQ-ATT-012 "別のバージョンの ugoke が始めた実行には、--force なしでは戻らず、終了ステータス 1 で終わる。cancel は、取り消す代わりに強制終了し、終了ステータス 0 で終わる" {
+    allow Ugoke follows Command only when compatible or force
+    allow Ugoke cancels Command only when compatible
+    allow Ugoke terminates Command only when which == Cancel and chosen(idGiven, idKnown, runsExist, selected) and not compatible
+    TerminatedExitsZero: always Command in Terminated has exitCode == Zero
+    FollowedRunIsCompatible: always Command in Following has (compatible or force)
+  }
+  rule REQ-ATT-006 "attach の終わり方と終了ステータスは、ugoke run と同じ" {
+    allow Ugoke finishes Command only when input exitCode != Pending
+    EndedHasExit: always Command in Ended has exitCode != Pending
+  }
+  rule REQ-ATT-007 "cancel は、ほかのプロセスが追いかけている実行も取り消し、終了ステータス 0 で終わる" {
+    allow Ugoke cancels Command only when which == Cancel and chosen(idGiven, idKnown, runsExist, selected)
+    CancelledExitsZero: always Command in Cancelled has exitCode == Zero
+  }
+
+  scenario AC-ATT-001 "ID で選んだ実行に戻り、ステップを実行して完了する" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke follows c1 with runsSteps true, fromStart true, startDefinition true
+    Ugoke finishes c1 with exitCode Zero
+    then c1 is Ended
+  }
+  scenario AC-ATT-002 "選べる実行がなければ、0 で終わる" {
+    User types c1 with which Attach, idGiven false, idKnown false, runsExist false, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke empties c1
+    then c1 is Empty
+  }
+  scenario AC-ATT-003 "ほかのプロセスが追いかけている実行には、戻れない" {
+    User types c1 with which Attach, idGiven false, idKnown false, runsExist true, selected true, locked true, workerRuns true, compatible true, force false
+    Ugoke refuses c1
+    then c1 is Refused
+  }
+  scenario AC-ATT-004 "ほかのプロセスが追いかけている実行も、取り消せる" {
+    User types c1 with which Cancel, idGiven false, idKnown false, runsExist true, selected true, locked true, workerRuns true, compatible true, force false
+    Ugoke cancels c1
+    then c1 is Cancelled
+  }
+  scenario AC-ATT-005 "知らない ID は、1 で終わる" {
+    User types c1 with which Cancel, idGiven true, idKnown false, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke refuses c1
+    then c1 is Refused
+  }
+  scenario AC-ATT-006 "ステップを動かすプロセスがあれば、追いかけるだけ" {
+    User types c1 with which Attach, idGiven false, idKnown false, runsExist true, selected true, locked false, workerRuns true, compatible true, force false
+    Ugoke follows c1 with runsSteps false, fromStart true, startDefinition true
+    Ugoke finishes c1 with exitCode Three
+    then c1 is Ended
+  }
+
+  scenario AC-ATT-008 "選ぶ前の Ctrl+C で、130 で終わる" {
+    User types c1 with which Cancel, idGiven false, idKnown false, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    User interrupts c1
+    then c1 is Interrupted
+  }
+
+  scenario AC-ATT-009 "サーバーを開けなければ、1 で終わる" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke loses c1
+    then c1 is Refused
+  }
+
+  scenario AC-ATT-010 "別のバージョンが始めた実行には、--force なしでは戻らない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible false, force false
+    Ugoke refuses c1
+    then c1 is Refused
+  }
+  scenario AC-ATT-011 "--force で、別のバージョンが始めた実行に戻る" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible false, force true
+    Ugoke follows c1 with runsSteps true, fromStart true, startDefinition true
+    then c1 is Following
+  }
+  scenario AC-ATT-012 "別のバージョンが始めた実行は、強制終了する" {
+    User types c1 with which Cancel, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible false, force false
+    Ugoke terminates c1
+    then c1 is Terminated
+  }
+
+  forbidden FB-ATT-001 "ほかのプロセスが追いかけている実行を、追いかけない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked true, workerRuns true, compatible true, force false
+    Ugoke follows c1 with runsSteps false, fromStart true, startDefinition true
+    then rejected
+  }
+  forbidden FB-ATT-002 "選ばなかったのに、追いかけない" {
+    User types c1 with which Attach, idGiven false, idKnown false, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke follows c1 with runsSteps true, fromStart true, startDefinition true
+    then rejected
+  }
+  forbidden FB-ATT-003 "選べる実行があるのに、ないことにしない" {
+    User types c1 with which Attach, idGiven false, idKnown false, runsExist true, selected true, locked false, workerRuns false, compatible true, force false
+    Ugoke empties c1
+    then rejected
+  }
+  forbidden FB-ATT-004 "ステップを動かすプロセスがないのに、動かさずに追いかけない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke follows c1 with runsSteps false, fromStart true, startDefinition true
+    then rejected
+  }
+  forbidden FB-ATT-005 "ステップを動かすプロセスがあるのに、もう 1 つ動かさない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns true, compatible true, force false
+    Ugoke follows c1 with runsSteps true, fromStart true, startDefinition true
+    then rejected
+  }
+  forbidden FB-ATT-006 "cancel で、追いかけない" {
+    User types c1 with which Cancel, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke follows c1 with runsSteps true, fromStart true, startDefinition true
+    then rejected
+  }
+  forbidden FB-ATT-007 "attach で、取り消さない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke cancels c1
+    then rejected
+  }
+  forbidden FB-ATT-008 "知らない ID の実行を、取り消さない" {
+    User types c1 with which Cancel, idGiven true, idKnown false, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke cancels c1
+    then rejected
+  }
+  forbidden FB-ATT-010 "選べる実行を、拒まない" {
+    User types c1 with which Cancel, idGiven true, idKnown true, runsExist true, selected false, locked true, workerRuns false, compatible true, force false
+    Ugoke refuses c1
+    then rejected
+  }
+  forbidden FB-ATT-011 "追いかけた実行を、終了ステータスなしで終えない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns true, compatible true, force false
+    Ugoke follows c1 with runsSteps false, fromStart true, startDefinition true
+    Ugoke finishes c1 with exitCode Pending
+    then rejected
+  }
+  forbidden FB-ATT-012 "打つ前に、追いかけない" {
+    Ugoke follows c1 with runsSteps true, fromStart true, startDefinition true
+    then rejected
+  }
+  forbidden FB-ATT-014 "戻ったときに、それまでの進捗を省かない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns true, compatible true, force false
+    Ugoke follows c1 with runsSteps false, fromStart false, startDefinition true
+    then rejected
+  }
+  forbidden FB-ATT-015 "戻った実行を、変えたあとの定義で続けない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke follows c1 with runsSteps true, fromStart true, startDefinition false
+    then rejected
+  }
+  forbidden FB-ATT-016 "別のバージョンが始めた実行に、--force なしで戻らない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible false, force false
+    Ugoke follows c1 with runsSteps true, fromStart true, startDefinition true
+    then rejected
+  }
+  forbidden FB-ATT-017 "別のバージョンが始めた実行を、ふつうに取り消さない" {
+    User types c1 with which Cancel, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible false, force false
+    Ugoke cancels c1
+    then rejected
+  }
+  forbidden FB-ATT-018 "同じバージョンの実行を、強制終了しない" {
+    User types c1 with which Cancel, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible true, force false
+    Ugoke terminates c1
+    then rejected
+  }
+  forbidden FB-ATT-019 "attach で、強制終了しない" {
+    User types c1 with which Attach, idGiven true, idKnown true, runsExist true, selected false, locked false, workerRuns false, compatible false, force false
+    Ugoke terminates c1
+    then rejected
+  }
+}
+verify {
+  instances Command = 1
+}

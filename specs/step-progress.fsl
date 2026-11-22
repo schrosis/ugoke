@@ -1,0 +1,115 @@
+fsl 5
+// Requirements for the progress of a step: what ugoke shows while a script or AI step runs.
+// Source: docs/reference/commands/run.md
+//
+// MODEL-PRG-001: how the step turns out (it succeeds, it fails, or it is stopped from outside)
+//                is given when it starts.
+// MODEL-PRG-002: ugoke shows each event as it arrives, so the order of the lines is the order
+//                of the events.
+// MODEL-PRG-003: a step with continueOnError that fails ends with the ✗ line and its reason too,
+//                marked as continued before its time, such as "· continued · 0.0s"
+//                (continue-on-error.fsl).
+requirements StepProgress {
+  enum Result { Ok, Error, Stopped }
+  enum Mark { NoMark, Check, Cross, Square }
+  actor Worker
+
+  entity StepRun {
+    result: Result = Ok
+    mark: Mark = NoMark
+    reasonShown: Bool = false
+    lifecycle Pending -> Running -> Succeeded
+    lifecycle Running -> Running
+    lifecycle Running -> Failed
+    lifecycle Running -> Cancelled
+  }
+
+  event start = Worker starts StepRun with result (Pending -> Running)
+    covers REQ-PRG-001 "ステップを始めると、ステップの ID を表示する"
+  event print = Worker prints StepRun (Running -> Running)
+    covers REQ-PRG-002 "ステップの出力は、始まりの行と結果の行のあいだに表示する"
+  event succeed = Worker succeeds StepRun (Running -> Succeeded)
+    set mark = Check
+  event fail = Worker fails StepRun (Running -> Failed)
+    set mark = Cross, reasonShown = true
+  event cancel = Worker cancels StepRun (Running -> Cancelled)
+    set mark = Square
+
+  rule REQ-PRG-003 "成功したステップは ✓ の行で終わる" {
+    allow Worker succeeds StepRun only when result == Ok
+    SucceededHasCheck: always StepRun in Succeeded has mark == Check
+  }
+  rule REQ-PRG-004 "失敗したステップは ✗ の行で終わり、理由を表示する" {
+    allow Worker fails StepRun only when result == Error
+    FailedHasCross: always StepRun in Failed has mark == Cross and reasonShown
+  }
+  rule REQ-PRG-005 "外から止めたステップは ■ の行で終わる" {
+    allow Worker cancels StepRun only when result == Stopped
+    CancelledHasSquare: always StepRun in Cancelled has mark == Square
+  }
+
+  scenario AC-PRG-001 "出力のあとに ✓ の行で終わる" {
+    Worker starts s1 with result Ok
+    Worker prints s1
+    Worker succeeds s1
+    then s1 is Succeeded
+  }
+  scenario AC-PRG-002 "失敗したステップは ✗ の行で終わる" {
+    Worker starts s1 with result Error
+    Worker prints s1
+    Worker fails s1
+    then s1 is Failed
+  }
+  scenario AC-PRG-003 "外から止めたステップは ■ の行で終わる" {
+    Worker starts s1 with result Stopped
+    Worker prints s1
+    Worker cancels s1
+    then s1 is Cancelled
+  }
+
+  forbidden FB-PRG-001 "結果の行のあとに、ステップの出力を表示しない" {
+    Worker starts s1 with result Ok
+    Worker succeeds s1
+    Worker prints s1
+    then rejected
+  }
+  forbidden FB-PRG-002 "結果の行を 2 度表示しない" {
+    Worker starts s1 with result Error
+    Worker fails s1
+    Worker fails s1
+    then rejected
+  }
+  forbidden FB-PRG-003 "外から止めたステップを、失敗と表示しない" {
+    Worker starts s1 with result Stopped
+    Worker fails s1
+    then rejected
+  }
+  forbidden FB-PRG-004 "失敗したステップを、取り消しと表示しない" {
+    Worker starts s1 with result Error
+    Worker cancels s1
+    then rejected
+  }
+  forbidden FB-PRG-005 "始まりの行より前に、結果の行を表示しない" {
+    Worker succeeds s1
+    then rejected
+  }
+  forbidden FB-PRG-006 "始めたステップを、もう一度始めない" {
+    Worker starts s1 with result Ok
+    Worker starts s1 with result Ok
+    then rejected
+  }
+  forbidden FB-PRG-007 "失敗したステップを、成功と表示しない" {
+    Worker starts s1 with result Error
+    Worker succeeds s1
+    then rejected
+  }
+  forbidden FB-PRG-008 "■ の行を 2 度表示しない" {
+    Worker starts s1 with result Stopped
+    Worker cancels s1
+    Worker cancels s1
+    then rejected
+  }
+}
+verify {
+  instances StepRun = 1
+}

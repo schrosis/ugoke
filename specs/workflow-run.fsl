@@ -1,0 +1,106 @@
+fsl 5
+// Requirements for running an accepted workflow definition.
+// Source: docs/reference/workflow-definition.md ("実行", "ステップのつながり", "ループ").
+//
+// MODEL-RUN-001: a run is described by how many steps it has run. Which step comes next, and when
+//                the run reaches end, are decided by the definition and the values of the run,
+//                which interpret-workflow.fsl and workflow-pipeline.fsl check. A step can run more
+//                than once in a loop, as loops.fsl says.
+// MODEL-RUN-002: whether a script or an AI step succeeds is not decided by ugoke, so a failure is
+//                a fault event. A step with continueOnError that fails ends like one that
+//                succeeds, so it is no fault here (continue-on-error.fsl).
+// MODEL-RUN-003: a run has at most six steps here, which the three steps of a definition with
+//                maxVisits 2 make (interpret-workflow.fsl, MODEL-INT-005).
+requirements WorkflowRun {
+  number Count
+  actor Ugoke, Script, User
+
+  entity Run {
+    executed: Count = 0
+    lifecycle Waiting -> Running -> Completed
+    lifecycle Running -> Failed
+    lifecycle Running -> Cancelled
+  }
+
+  event start = Ugoke starts Run (Waiting -> Running)
+    covers REQ-TRN-008 "ワークフローは start のステップから始まる"
+  event advance = Ugoke advances Run in Running
+    set executed = executed + 1
+    covers REQ-TRN-006 "ステップが成功すると、その next に進む。分岐があれば、条件が成り立つ最初の分岐の行き先に進む"
+  event complete = Ugoke completes Run (Running -> Completed)
+    set executed = executed + 1
+    covers REQ-TRN-007 "行き先が end のステップが成功すると、ワークフローが終わる"
+  // A run that has failed, been cancelled, or completed has no event, so a failed step does not
+  // run again (FB-RUN-001).
+  fault event fail = Script fails Run (Running -> Failed)
+    set executed = executed + 1
+    covers REQ-RUN-001 "continueOnError のないステップが失敗すると、ワークフローはそれ以降のステップを実行せずに失敗する"
+    covers REQ-RUN-002 "失敗したステップは、やり直さない"
+  event cancel = User cancels Run (Running -> Cancelled)
+    set executed = executed + 1
+    covers REQ-RUN-006 "取り消すと、ワークフローはそれ以降のステップを実行しない"
+
+  // MODEL-RUN-003: the bound of six steps stands for maxVisits and the history limit.
+  rule REQ-TRN-004 "受け付けた定義は、実行すると必ず終わる。ループは maxVisits か履歴の上限で止まる" {
+    allow Ugoke advances Run only when executed < 6
+  }
+
+  scenario AC-RUN-001 "ステップが全部成功すると、end で終わる" {
+    Ugoke starts r1
+    Ugoke advances r1
+    Ugoke completes r1
+    then r1 is Completed
+  }
+  scenario AC-RUN-002 "途中のステップが失敗すると、ワークフローは失敗する" {
+    Ugoke starts r1
+    Script fails r1
+    then r1 is Failed
+  }
+  scenario AC-RUN-003 "3 つのステップを順に実行して、end で終わる" {
+    Ugoke starts r1
+    Ugoke advances r1
+    Ugoke advances r1
+    Ugoke completes r1
+    then stage(r1) == Completed and r1.executed == 3
+  }
+  scenario AC-RUN-004 "途中のステップが失敗すると、そのステップまでを実行する" {
+    Ugoke starts r1
+    Ugoke advances r1
+    Script fails r1
+    then stage(r1) == Failed and r1.executed == 2
+  }
+  scenario AC-RUN-005 "取り消すと、そのときのステップまでを実行して止まる" {
+    Ugoke starts r1
+    User cancels r1
+    then stage(r1) == Cancelled and r1.executed == 1
+  }
+
+  forbidden FB-RUN-001 "失敗したあとは、次のステップに進まない" {
+    Ugoke starts r1
+    Script fails r1
+    Ugoke advances r1
+    then rejected
+  }
+  forbidden FB-RUN-002 "失敗したあとは、終わりにしない" {
+    Ugoke starts r1
+    Script fails r1
+    Ugoke completes r1
+    then rejected
+  }
+  forbidden FB-RUN-006 "取り消したあとは、次のステップに進まない" {
+    Ugoke starts r1
+    User cancels r1
+    Ugoke advances r1
+    then rejected
+  }
+  forbidden FB-RUN-007 "終わったあとは、次のステップに進まない" {
+    Ugoke starts r1
+    Ugoke completes r1
+    Ugoke advances r1
+    then rejected
+  }
+}
+verify {
+  instances Run = 1
+  values Count = 0..7
+}

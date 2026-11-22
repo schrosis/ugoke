@@ -1,0 +1,102 @@
+fsl 5
+// Requirements for ugoke init: it makes the current directory a project, and never changes a
+// project that is already there.
+// Source: docs/reference/commands/init.md
+//
+// MODEL-INI-001: one run of the command is modeled. Whether .ugoke exists in the current directory
+//                and whether the files can be written are given when the command runs. Creating
+//                .ugoke also tells whether it exists, so a project that another process creates
+//                at the same time is not mixed with this one.
+// MODEL-INI-002: the files are .ugoke/config.yaml, whose comments tell how to write plugins,
+//                .ugoke/workflows/hello.yaml, a workflow that prints a line, and the JSON Schemas
+//                of ugoke schema (schema-command.fsl). Both files start with $schema. The command
+//                can run inside another project, which then has a nearer root
+//                (project-files.fsl).
+// MODEL-INI-003: after it writes every file, the command prints "wrote <file>" for each to standard
+//                output, with the path relative to the current directory, and then the next
+//                commands to run, ugoke daemon start and ugoke run hello. On a failure, it prints
+//                the reason to standard error.
+requirements InitCommand {
+  enum Exit { Pending, Zero, One }
+  actor User, Ugoke
+
+  entity InitRun {
+    existing: Bool = false
+    writable: Bool = false
+    hasUgoke: Bool = false
+    exitCode: Exit = Pending
+    lifecycle Typed -> Started -> Making -> Created
+    lifecycle Started -> Refused
+    lifecycle Making -> RolledBack
+  }
+
+  event type = User types InitRun with existing, writable (Typed -> Started)
+    set hasUgoke = input existing
+    covers REQ-INI-001 "ugoke init は、今のディレクトリに .ugoke を作り、設定ファイル、試すためのワークフロー、JSON Schema を書く"
+  event makeDirectory = Ugoke makes InitRun (Started -> Making)
+    set hasUgoke = true
+  event create = Ugoke creates InitRun (Making -> Created)
+    set hasUgoke = true, exitCode = Zero
+  event refuse = Ugoke refuses InitRun (Started -> Refused)
+    set exitCode = One
+  event rollBack = Ugoke rollsBack InitRun (Making -> RolledBack)
+    set hasUgoke = false, exitCode = One
+
+  rule REQ-INI-002 ".ugoke がもうあるときは、何も作らずに 1 で終わる。中のファイルは変えない" {
+    allow Ugoke refuses InitRun only when existing
+    RefusedKeepsProject: always InitRun in Refused has hasUgoke and exitCode == One
+  }
+  rule REQ-INI-003 "途中で失敗したときは、作った .ugoke を消して、1 で終わる" {
+    allow Ugoke makes InitRun only when not existing
+    allow Ugoke rollsBack InitRun only when not writable
+    RolledBackLeavesNothing: always InitRun in RolledBack has not hasUgoke and exitCode == One
+  }
+  rule REQ-INI-004 ".ugoke がなく、ファイルを書ければ、プロジェクトを作って 0 で終わる" {
+    allow Ugoke creates InitRun only when writable
+    CreatedHasUgoke: always InitRun in Created has hasUgoke and exitCode == Zero
+  }
+
+  scenario AC-INI-001 "プロジェクトを作る" {
+    User types r1 with existing false, writable true
+    Ugoke makes r1
+    Ugoke creates r1
+    then stage(r1) == Created and r1.exitCode == Zero
+  }
+  scenario AC-INI-002 ".ugoke がもうあれば、1 で終わり、そのまま残す" {
+    User types r1 with existing true, writable true
+    Ugoke refuses r1
+    then stage(r1) == Refused and r1.hasUgoke and r1.exitCode == One
+  }
+  scenario AC-INI-003 "途中で失敗すれば、作った .ugoke を消す" {
+    User types r1 with existing false, writable false
+    Ugoke makes r1
+    Ugoke rollsBack r1
+    then stage(r1) == RolledBack and not r1.hasUgoke
+  }
+
+  forbidden FB-INI-001 ".ugoke がもうあるのに、作り直さない" {
+    User types r1 with existing true, writable true
+    Ugoke makes r1
+    then rejected
+  }
+  forbidden FB-INI-002 "書けるのに、作った .ugoke を消さない" {
+    User types r1 with existing false, writable true
+    Ugoke makes r1
+    Ugoke rollsBack r1
+    then rejected
+  }
+  forbidden FB-INI-004 "書けないのに、作ったことにしない" {
+    User types r1 with existing false, writable false
+    Ugoke makes r1
+    Ugoke creates r1
+    then rejected
+  }
+  forbidden FB-INI-003 "作れるのに、断らない" {
+    User types r1 with existing false, writable true
+    Ugoke refuses r1
+    then rejected
+  }
+}
+verify {
+  instances InitRun = 1
+}

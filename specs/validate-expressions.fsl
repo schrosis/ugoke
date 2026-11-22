@@ -1,0 +1,163 @@
+fsl 5
+// Design of the reference check of expressions. validateExpressions
+// (packages/core/src/intermediate/expressions.ts) checks each reference in turn: the roots that
+// the place may use, the steps that run before, the declared names, and a field of a value. A
+// reference in the arguments of a call is checked in the same way. The calls themselves are
+// checked before (expression-functions.fsl).
+//
+// It refines the requirements of step-references.fsl.
+spec ValidateExpressions {
+  entity Reference
+  enum CheckPhase { Unchecked, Lexed, RootChecked, OrderChecked, NameChecked, RefsPassed, RefsFailed }
+  enum Site { AtInputs, AtRun, AtPrompt, AtWith, AtStepEnv, AtOutputs, AtIf, AtWorkflowEnv }
+  enum StepKind { OfScript, OfWait, OfAi, OfWorkflow }
+  enum Target { ToStep, ToWorkflow, ToOwn, ToOwnOutput, ToEnv, ToResult, ToAnswer, ToData, ToOutcome, ToOther }
+  enum Message { NoMessage, CanReferenceOnly, FieldOfValue, NotBefore, NotDeclared }
+
+  state {
+    phase: Map<Reference, CheckPhase>,
+    site: Map<Reference, Site>,
+    kind: Map<Reference, StepKind>,
+    target: Map<Reference, Target>,
+    declared: Map<Reference, Bool>,
+    earlier: Map<Reference, Bool>,
+    nested: Map<Reference, Bool>,
+    message: Map<Reference, Message>
+  }
+
+  init {
+    forall r: Reference {
+      phase[r] = Unchecked
+      site[r] = AtInputs
+      kind[r] = OfScript
+      target[r] = ToStep
+      declared[r] = false
+      earlier[r] = false
+      nested[r] = false
+      message[r] = NoMessage
+    }
+  }
+
+  // The roots of each place: step outputs and workflow inputs everywhere but env of the workflow,
+  // which has only workflow inputs, own inputs in every place of a step but inputs and if, in the
+  // outputs and the if, the result of the kind of the step: the script result, the answers, or
+  // result.data, and in the if (checkCondition), its own outputs and env.
+  def afterStep(s: Site) = s == AtOutputs or s == AtIf
+
+  def rootAllowed(s: Site, k: StepKind, t: Target) =
+    (t == ToStep and s != AtWorkflowEnv) or t == ToWorkflow
+      or (t == ToOwn and s != AtInputs and s != AtWorkflowEnv and s != AtIf)
+      or (t == ToResult and afterStep(s) and k == OfScript)
+      or (t == ToAnswer and afterStep(s) and k == OfWait)
+      or (t == ToData and afterStep(s) and k == OfAi)
+      or (t == ToOutcome and afterStep(s) and (k == OfScript or k == OfAi))
+      or ((t == ToOwnOutput or t == ToEnv) and s == AtIf)
+
+  @requirement("REQ-REF-001", "式は、${{ }} で囲んで、ほかの値を参照する")
+  action read(r: Reference, s: Site, k: StepKind, t: Target, d: Bool, e: Bool, n: Bool) {
+    requires phase[r] == Unchecked
+    // A script step has run and env, a wait step has with, and an AI step has prompt, with, and
+    // env. env of the workflow belongs to no step.
+    requires (s != AtRun or k == OfScript) and (s != AtPrompt or k == OfAi)
+      and (s != AtWith or k == OfWait or k == OfAi) and (s != AtStepEnv or k == OfScript or k == OfAi)
+      and ((s == AtWorkflowEnv) == (k == OfWorkflow))
+    // checkAiResult checks the fields after result.data against the schema, and reports them as
+    // not declared.
+    requires t != ToData or not n
+    // result.ok and result.error of a script or an AI step have no fields. checkResult reports
+    // a field after them as a reference that cannot be used, which is ToOther.
+    requires t != ToOutcome or not n
+    // The names of env are not checked, because the variables can come from outside.
+    requires t != ToEnv or d
+    phase[r] = Lexed
+    site[r] = s
+    kind[r] = k
+    target[r] = t
+    declared[r] = d
+    earlier[r] = e
+    nested[r] = n
+  }
+
+  @requirement("REQ-REF-004", "スクリプトの結果は、outputs と分岐の条件だけが参照できる")
+  action rootFails(r: Reference) {
+    requires phase[r] == Lexed
+    requires not rootAllowed(site[r], kind[r], target[r])
+    phase[r] = RefsFailed
+    message[r] = CanReferenceOnly
+  }
+
+  @requirement("REQ-REF-003", "inputs は自分の inputs を参照できない。run、prompt、with、ステップの env、outputs は自分の inputs を参照できる")
+  action rootPasses(r: Reference) {
+    requires phase[r] == Lexed
+    requires rootAllowed(site[r], kind[r], target[r])
+    phase[r] = RootChecked
+  }
+
+  @requirement("REQ-REF-002", "ワークフローの env を除くどの式でも、前に実行することがあるステップが宣言した outputs を参照できる。別の分岐で動かなかったステップの値は null")
+  action orderFails(r: Reference) {
+    requires phase[r] == RootChecked
+    requires target[r] == ToStep and not earlier[r]
+    phase[r] = RefsFailed
+    message[r] = NotBefore
+  }
+
+  @requirement("MODEL-VEX-001", "前に実行するステップか、ステップ以外の値なら、次を確かめる")
+  action orderPasses(r: Reference) {
+    requires phase[r] == RootChecked
+    requires target[r] != ToStep or earlier[r]
+    phase[r] = OrderChecked
+  }
+
+  @requirement("MODEL-VEX-002", "宣言していない名前は拒む")
+  action declarationFails(r: Reference) {
+    requires phase[r] == OrderChecked
+    requires not declared[r]
+    phase[r] = RefsFailed
+    message[r] = NotDeclared
+  }
+
+  @requirement("MODEL-VEX-003", "宣言した名前なら、次を確かめる")
+  action declarationPasses(r: Reference) {
+    requires phase[r] == OrderChecked
+    requires declared[r]
+    phase[r] = NameChecked
+  }
+
+  @requirement("REQ-REF-005", "宣言していない値と、値の中の項目は参照できない")
+  action shapeFails(r: Reference) {
+    requires phase[r] == NameChecked
+    requires nested[r]
+    phase[r] = RefsFailed
+    message[r] = FieldOfValue
+  }
+
+  @requirement("REQ-REF-006", "参照できる値は、受け付ける")
+  action shapePasses(r: Reference) {
+    requires phase[r] == NameChecked
+    requires not nested[r]
+    phase[r] = RefsPassed
+  }
+
+  @requirement("MODEL-VEX-004", "確かめ終わったあとは、何も起きない")
+  action rest(r: Reference) {
+    requires phase[r] == RefsPassed or phase[r] == RefsFailed
+    phase[r] = phase[r]
+  }
+
+  @requirement("MODEL-VEX-005", "拒んだ参照には、理由のメッセージがある")
+  invariant FailedHasMessage {
+    forall r: Reference { (phase[r] == RefsFailed) == (message[r] != NoMessage) }
+  }
+
+  @requirement("MODEL-VEX-006", "値の中の項目で拒むのは、前に実行するかと宣言を確かめたあとだけ")
+  invariant FieldCheckedLast {
+    forall r: Reference {
+      message[r] == FieldOfValue => ((target[r] != ToStep or earlier[r]) and declared[r])
+    }
+  }
+
+  terminal { forall r: Reference { phase[r] == RefsPassed or phase[r] == RefsFailed } }
+}
+verify {
+  instances Reference = 1
+}

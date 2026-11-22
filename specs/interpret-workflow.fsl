@@ -1,0 +1,297 @@
+fsl 5
+// Design of the interpreter of the engine (packages/engine/src/workflows/index.ts), which runs an
+// intermediate representation:
+//
+// - it validates the representation again, and refuses one that is not valid (InvalidIntermediate)
+// - it runs the steps from start along next, one Activity at a time, and after a step with
+//   branches, it goes to the target of the first branch whose condition holds
+// - a step whose script exits with a nonzero status, whose AI fails, or that passes its timeout
+//   fails, and the Activity is not retried (maximumAttempts: 1), so the run fails there. The
+//   Activity of a step with continueOnError returns such a failure as its result instead, so the
+//   run goes on as after a step that succeeds (continue-on-error.fsl)
+//
+// It refines the run requirements of workflow-run.fsl.
+spec InterpretWorkflow {
+  entity Definition
+  const END = 3
+  type Node = 0..3
+  type Count = 0..7
+  // MODEL-INT-005: every step has maxVisits 2 here. A step without maxVisits runs until the
+  // history of the run is too long (loops.fsl), which this bound stands for.
+  const MAX = 2
+  enum InterpretPhase { Idle, Aimed, Executing, Succeeded, Aborted, Withdrawn, Refused }
+  enum Cause { NoCause, NonzeroExit, TimedOut, WorkerLost, TooManyVisits }
+
+  state {
+    phase: Map<Definition, InterpretPhase>,
+    p0: Map<Definition, Bool>,
+    p1: Map<Definition, Bool>,
+    p2: Map<Definition, Bool>,
+    n0: Map<Definition, Node>,
+    n1: Map<Definition, Node>,
+    n2: Map<Definition, Node>,
+    c0: Map<Definition, Node>,
+    c1: Map<Definition, Node>,
+    c2: Map<Definition, Node>,
+    u0: Map<Definition, Count>,
+    u1: Map<Definition, Count>,
+    u2: Map<Definition, Count>,
+    start: Map<Definition, Node>,
+    filled: Map<Definition, Count>,
+    valid: Map<Definition, Bool>,
+    current: Map<Definition, Node>,
+    executed: Map<Definition, Count>,
+    cause: Map<Definition, Cause>,
+    v0: Map<Definition, Bool>,
+    v1: Map<Definition, Bool>,
+    v2: Map<Definition, Bool>
+  }
+
+  init {
+    forall d: Definition {
+      phase[d] = Idle
+      p0[d] = false
+      p1[d] = false
+      p2[d] = false
+      n0[d] = 3
+      n1[d] = 3
+      n2[d] = 3
+      c0[d] = 3
+      c1[d] = 3
+      c2[d] = 3
+      u0[d] = 0
+      u1[d] = 0
+      u2[d] = 0
+      start[d] = 0
+      filled[d] = 0
+      valid[d] = false
+      current[d] = 0
+      executed[d] = 0
+      cause[d] = NoCause
+      v0[d] = false
+      v1[d] = false
+      v2[d] = false
+    }
+  }
+
+  // These definitions are copies: workflow-transitions.fsl, validate-transitions.fsl and
+  // interpret-workflow.fsl each have them, because FSL cannot share a def across files. Keep the
+  // three the same.
+  def has(p0: Bool, p1: Bool, p2: Bool, x: Node) = (x == 0 and p0) or (x == 1 and p1) or (x == 2 and p2)
+
+  // Where a step goes: to is the last branch, or next without branches, and alt is the branch
+  // with if. A step without branches, or whose branches go to one node, has alt equal to to.
+  def to(n0: Node, n1: Node, n2: Node, x: Node) =
+    if x == 0 then n0 else if x == 1 then n1 else if x == 2 then n2 else END
+  def alt(c0: Node, c1: Node, c2: Node, x: Node) =
+    if x == 0 then c0 else if x == 1 then c1 else if x == 2 then c2 else END
+
+  // A node that next may name: end, or a step of the definition.
+  def known(p0: Bool, p1: Bool, p2: Bool, x: Node) = x == END or has(p0, p1, p2, x)
+
+  // Whether step x of the definition can go to node y.
+  def moves(p0: Bool, p1: Bool, p2: Bool, n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node, x: Node, y: Node) =
+    has(p0, p1, p2, x) and (to(n0, n1, n2, x) == y or alt(c0, c1, c2, x) == y)
+
+  // A step that can go to end or to an unknown step ends a path. An unknown step is reported on
+  // its own, so it does not count as a path that never ends.
+  def endsPath(p0: Bool, p1: Bool, p2: Bool, n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node, x: Node) =
+    to(n0, n1, n2, x) == END or alt(c0, c1, c2, x) == END
+      or not known(p0, p1, p2, to(n0, n1, n2, x)) or not known(p0, p1, p2, alt(c0, c1, c2, x))
+
+  // Steps from which some path ends within three moves.
+  def canEnd(p0: Bool, p1: Bool, p2: Bool, n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node, x: Node) =
+    has(p0, p1, p2, x) and (
+      endsPath(p0, p1, p2, n0, n1, n2, c0, c1, c2, x)
+        or (exists y: Node {
+          moves(p0, p1, p2, n0, n1, n2, c0, c1, c2, x, y) and has(p0, p1, p2, y) and (
+            endsPath(p0, p1, p2, n0, n1, n2, c0, c1, c2, y)
+              or (exists z: Node {
+                moves(p0, p1, p2, n0, n1, n2, c0, c1, c2, y, z) and has(p0, p1, p2, z) and endsPath(p0, p1, p2, n0, n1, n2, c0, c1, c2, z)
+              }))
+        })
+    )
+
+  // Steps that some path from start visits; three steps need at most two moves.
+  def reachable(p0: Bool, p1: Bool, p2: Bool, n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node, s: Node, x: Node) =
+    x == s or moves(p0, p1, p2, n0, n1, n2, c0, c1, c2, s, x)
+      or (exists m: Node { moves(p0, p1, p2, n0, n1, n2, c0, c1, c2, s, m) and moves(p0, p1, p2, n0, n1, n2, c0, c1, c2, m, x) })
+
+  def targetsKnown(p0: Bool, p1: Bool, p2: Bool, n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node, s: Node) =
+    has(p0, p1, p2, s) and (forall x: Node {
+      has(p0, p1, p2, x) => (known(p0, p1, p2, to(n0, n1, n2, x)) and known(p0, p1, p2, alt(c0, c1, c2, x)))
+    })
+
+  def allReachable(p0: Bool, p1: Bool, p2: Bool, n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node, s: Node) =
+    forall x: Node { has(p0, p1, p2, x) => reachable(p0, p1, p2, n0, n1, n2, c0, c1, c2, s, x) }
+
+  def allCanEnd(p0: Bool, p1: Bool, p2: Bool, n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node) =
+    forall x: Node { has(p0, p1, p2, x) => canEnd(p0, p1, p2, n0, n1, n2, c0, c1, c2, x) }
+
+  // Every rule of the transitions.
+  def transitionsOk(p0: Bool, p1: Bool, p2: Bool, n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node, s: Node) =
+    targetsKnown(p0, p1, p2, n0, n1, n2, c0, c1, c2, s) and allReachable(p0, p1, p2, n0, n1, n2, c0, c1, c2, s) and allCanEnd(p0, p1, p2, n0, n1, n2, c0, c1, c2)
+
+  // Where the run goes after step x: alt when the condition of its branch holds (k), and to
+  // otherwise.
+  def target(n0: Node, n1: Node, n2: Node, c0: Node, c1: Node, c2: Node, x: Node, k: Bool) =
+    if k then alt(c0, c1, c2, x) else to(n0, n1, n2, x)
+
+  // How many times step x has run.
+  def visitsOf(u0: Count, u1: Count, u2: Count, x: Node) =
+    if x == 0 then u0 else if x == 1 then u1 else if x == 2 then u2 else 0
+
+  // The steps of the representation arrive one by one (MODEL-TRN-004 of workflow-transitions.fsl).
+  @requirement("MODEL-INT-001", "実行する中間表現を受け取る")
+  action fill(d: Definition, p: Bool, n: Node, c: Node) {
+    requires phase[d] == Idle
+    requires filled[d] < 3
+    // MODEL-TRN-005 of workflow-transitions.fsl.
+    requires n <= c and (p or (n == END and c == END))
+    p0[d] = if filled[d] == 0 then p else p0[d]
+    p1[d] = if filled[d] == 1 then p else p1[d]
+    p2[d] = if filled[d] == 2 then p else p2[d]
+    n0[d] = if filled[d] == 0 then n else n0[d]
+    n1[d] = if filled[d] == 1 then n else n1[d]
+    n2[d] = if filled[d] == 2 then n else n2[d]
+    c0[d] = if filled[d] == 0 then c else c0[d]
+    c1[d] = if filled[d] == 1 then c else c1[d]
+    c2[d] = if filled[d] == 2 then c else c2[d]
+    filled[d] = filled[d] + 1
+  }
+
+  // The interpreter validates the representation again before it runs anything.
+  @requirement("MODEL-INT-001", "実行する中間表現を受け取る")
+  action aim(d: Definition, s: Node) {
+    requires phase[d] == Idle
+    requires filled[d] == 3
+    phase[d] = Aimed
+    start[d] = s
+    valid[d] = transitionsOk(p0[d], p1[d], p2[d], n0[d], n1[d], n2[d], c0[d], c1[d], c2[d], s)
+  }
+
+  @requirement("REQ-TRN-008", "ワークフローは start のステップから始まる")
+  action load(d: Definition) {
+    requires phase[d] == Aimed
+    requires valid[d]
+    phase[d] = Executing
+    current[d] = start[d]
+    u0[d] = if start[d] == 0 then 1 else 0
+    u1[d] = if start[d] == 1 then 1 else 0
+    u2[d] = if start[d] == 2 then 1 else 0
+    v0[d] = start[d] == 0
+    v1[d] = start[d] == 1
+    v2[d] = start[d] == 2
+  }
+
+  @requirement("MODEL-INT-002", "正しくない中間表現は実行しない（InvalidIntermediate）")
+  action refuse(d: Definition) {
+    requires phase[d] == Aimed
+    requires not valid[d]
+    phase[d] = Refused
+  }
+
+  // Whether the condition of the branch holds (k) depends on the values of the run, which are not
+  // modeled, so it is given each time a step ends. A step whose branches go to one node has no
+  // condition that matters.
+  @requirement("REQ-TRN-006", "ステップが成功すると、その next に進む。分岐があれば、条件が成り立つ最初の分岐の行き先に進む")
+  action succeed(d: Definition, k: Bool) {
+    requires phase[d] == Executing
+    requires not k or alt(c0[d], c1[d], c2[d], current[d]) != to(n0[d], n1[d], n2[d], current[d])
+    let t = target(n0[d], n1[d], n2[d], c0[d], c1[d], c2[d], current[d], k)
+    requires t != END
+    requires visitsOf(u0[d], u1[d], u2[d], t) < MAX
+    current[d] = t
+    executed[d] = executed[d] + 1
+    u0[d] = if t == 0 then u0[d] + 1 else u0[d]
+    u1[d] = if t == 1 then u1[d] + 1 else u1[d]
+    u2[d] = if t == 2 then u2[d] + 1 else u2[d]
+    v0[d] = v0[d] or t == 0
+    v1[d] = v1[d] or t == 1
+    v2[d] = v2[d] or t == 2
+  }
+
+  // The next step already ran maxVisits times, so it fails before it runs (MaxVisitsExceeded).
+  @requirement("REQ-LOP-002", "maxVisits の回数だけ動いたステップにもう一度進むと、そのステップを動かさずに、ワークフローは失敗する")
+  action exceed(d: Definition, k: Bool) {
+    requires phase[d] == Executing
+    requires not k or alt(c0[d], c1[d], c2[d], current[d]) != to(n0[d], n1[d], n2[d], current[d])
+    let t = target(n0[d], n1[d], n2[d], c0[d], c1[d], c2[d], current[d], k)
+    requires t != END
+    requires visitsOf(u0[d], u1[d], u2[d], t) >= MAX
+    phase[d] = Aborted
+    cause[d] = TooManyVisits
+    executed[d] = executed[d] + 1
+  }
+
+  @requirement("REQ-TRN-007", "行き先が end のステップが成功すると、ワークフローが終わる")
+  action succeedLast(d: Definition, k: Bool) {
+    requires phase[d] == Executing
+    requires not k or alt(c0[d], c1[d], c2[d], current[d]) != to(n0[d], n1[d], n2[d], current[d])
+    requires target(n0[d], n1[d], n2[d], c0[d], c1[d], c2[d], current[d], k) == END
+    phase[d] = Succeeded
+    executed[d] = executed[d] + 1
+  }
+
+  @requirement("REQ-RUN-001", "continueOnError のないステップが失敗すると、ワークフローはそれ以降のステップを実行せずに失敗する")
+  action exitNonzero(d: Definition) {
+    requires phase[d] == Executing
+    phase[d] = Aborted
+    cause[d] = NonzeroExit
+    executed[d] = executed[d] + 1
+  }
+
+  @requirement("REQ-RUN-001", "continueOnError のないステップが失敗すると、ワークフローはそれ以降のステップを実行せずに失敗する")
+  action timeOut(d: Definition) {
+    requires phase[d] == Executing
+    phase[d] = Aborted
+    cause[d] = TimedOut
+    executed[d] = executed[d] + 1
+  }
+
+  // The Worker that runs the step exits before the step ends, for example at the second Ctrl+C of
+  // ugoke run. The step fails, and the run cannot be continued.
+  @requirement("REQ-RUN-001", "continueOnError のないステップが失敗すると、ワークフローはそれ以降のステップを実行せずに失敗する")
+  action loseWorker(d: Definition) {
+    requires phase[d] == Executing
+    phase[d] = Aborted
+    cause[d] = WorkerLost
+    executed[d] = executed[d] + 1
+  }
+
+  // The run is cancelled, for example by ugoke cancel.
+  @requirement("REQ-RUN-006", "取り消すと、ワークフローはそれ以降のステップを実行しない")
+  action withdraw(d: Definition) {
+    requires phase[d] == Executing
+    phase[d] = Withdrawn
+    executed[d] = executed[d] + 1
+  }
+
+  @requirement("MODEL-INT-003", "ステップが動いた回数は、maxVisits を超えない")
+  invariant VisitsAreBounded {
+    forall d: Definition { u0[d] <= MAX and u1[d] <= MAX and u2[d] <= MAX }
+  }
+
+  @requirement("MODEL-INT-004", "失敗には、0 以外の終了か時間切れの原因がある")
+  invariant FailureHasCause {
+    forall d: Definition { phase[d] == Aborted => cause[d] != NoCause }
+  }
+
+  // A failed run does nothing more: no step runs again after it fails.
+  @requirement("REQ-RUN-002", "失敗したステップは、やり直さない")
+  trans FailedRunStaysFailed {
+    forall d: Definition {
+      (old(phase[d]) == Aborted => (phase[d] == Aborted and executed[d] == old(executed[d])))
+        and (old(phase[d]) == Withdrawn => (phase[d] == Withdrawn and executed[d] == old(executed[d])))
+    }
+  }
+
+  terminal {
+    forall d: Definition {
+      phase[d] == Succeeded or phase[d] == Aborted or phase[d] == Withdrawn or phase[d] == Refused
+    }
+  }
+}
+verify {
+  instances Definition = 1
+}

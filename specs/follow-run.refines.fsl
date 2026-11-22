@@ -1,0 +1,47 @@
+fsl 5
+// refine: follow-run.fsl run-command.fsl
+//
+// ugoke run keeps the requirements of the command: it runs only a checked definition, handles
+// Ctrl+C by where the steps run, and ends with the exit status of what happened.
+refinement FollowRunRefinesRunCommand {
+  impl FollowRun
+  abs RunCommand
+
+  map command_stage[c: Command] =
+    if phase[c] == Unstarted then Typed
+    else if phase[c] == Launched then Issued
+    else if phase[c] == Watching then Following
+    else if phase[c] == Stopping then Draining
+    else if phase[c] == Finished then Completed
+    else if phase[c] == Broke then Failed
+    else if phase[c] == Left then Detached
+    else if phase[c] == Withdrew then Cancelled
+    else if phase[c] == Quit then Abandoned
+    else if phase[c] == Unserved then NoServer
+    else if phase[c] == Halted then Interrupted
+    else Refused
+  map command_definitionOk[c: Command] = definitionOk[c]
+  map command_addressOpt[c: Command] = addressOpt[c]
+  map command_configAddress[c: Command] = configAddress[c]
+  map command_daemonRunning[c: Command] = daemonRunning[c]
+  map command_daemonMatches[c: Command] = daemonMatches[c]
+  map command_viaDaemon[c: Command] = viaDaemon[c]
+  map command_exitCode[c: Command] = exitCode[c]
+  map command_finalLine[c: Command] =
+    if finalLine[c] == ToStdout then OnStdout else if finalLine[c] == ToStderr then OnStderr else NoLine
+
+  action run(c, ok, a, cfg, dr, dm) -> issue(c, ok, a, cfg, dr, dm)
+  action unserved(c) -> noServer(c)
+  action reject(c) -> refuse(c)
+  action interruptEarly(c) -> interrupt(c)
+  action begin(c) -> start(c)
+  action stepStarts(c) -> stutter
+  action stepEnds(c) -> stutter
+  action finish(c) -> complete(c)
+  action breaks(c) -> fail(c)
+  action interruptDaemon(c) -> detach(c)
+  action cancelled(c) -> cancel(c)
+  action interruptOwnWorker(c) -> drain(c)
+  action stopped(c) -> settle(c)
+  action interruptAgain(c) -> abandon(c)
+}

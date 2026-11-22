@@ -1,0 +1,23 @@
+fsl 5
+// refine: print-progress.fsl script-output.fsl
+//
+// The progress printer keeps the requirements of the output of a script step: each piece goes to
+// the stream that the step used, and the line of the end starts on a new line.
+refinement PrintProgressRefinesScriptOutput {
+  impl PrintProgress
+  abs ScriptOutput
+
+  map steprun_stage[s: StepRun] =
+    if phase[s] == Idle then Pending
+    else if phase[s] == Streaming or phase[s] == Closing then Running
+    else Ended
+  map steprun_written[s: StepRun] = written[s]
+  map steprun_shown[s: StepRun] = target[s]
+  map steprun_endAtLineStart[s: StepRun] = endAtLineStart[s]
+
+  action begin(s) -> start(s)
+  action output(s, st, endsLine) -> print(s, st)
+  action closeLines(s) -> stutter
+  action end(s) -> finish(s)
+  action rest(s) -> stutter
+}

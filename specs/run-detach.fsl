@@ -1,0 +1,110 @@
+fsl 5
+// Requirements for ugoke run --detach: it starts a run in the resident process and exits without
+// following it.
+// Source: docs/reference/commands/run.md, docs/guide/run.md ("あとで答える")
+//
+// MODEL-DET-001: one command is modeled. Whether the definition and --input are valid, and whether
+//                the resident process runs the steps of the project on the chosen server
+//                (run-command.fsl, MODEL-CMD-001), are given when it is typed. The resident process
+//                does not run them when it is not running, runs another version of ugoke, or does
+//                not serve temporal.address of the project. A problem in the configuration file of
+//                the project, a plugin that cannot be loaded (plugins.fsl), and a broken encryption
+//                key end the command with 1, as for ugoke run (run-command.fsl, MODEL-CMD-003).
+// MODEL-DET-002: --detach cannot be combined with --address, which the options refuse, nor with
+//                --from-ai. The command exits as soon as it starts the run, and takes no lock
+//                (follow-lock.fsl), so Ctrl+C while a run is followed and another process that
+//                follows the run do not apply. Ctrl+C before the run starts does, as for ugoke run
+//                (run-command.fsl, REQ-CMD-014).
+// MODEL-DET-003: when the command starts the run, it shows the workflow ID with ugoke inbox list
+//                and ugoke attach on standard output. When the resident process does not run the
+//                steps, it shows why on standard error. The run has the same memo of the project
+//                and the workflow as ugoke run gives, so ugoke attach, ugoke inbox list, and
+//                ugoke cancel find it.
+requirements RunDetach {
+  enum Exit { Running, Zero, One, OneThirty }
+  actor User, Ugoke
+
+  entity Detached {
+    inputsOk: Bool = false
+    served: Bool = false
+    exitCode: Exit = Running
+    lifecycle Typed -> Issued -> Started
+    lifecycle Issued -> Refused
+    lifecycle Issued -> Interrupted
+  }
+
+  event issue = User runs Detached with inputsOk, served (Typed -> Issued)
+    covers REQ-DET-001 "--detach を付けると、常駐プロセスで実行を始め、追いかけずに終了ステータス 0 で終わる。答え待ちは ugoke inbox list に出る"
+  event start = Ugoke starts Detached (Issued -> Started)
+    set exitCode = Zero
+  event refuse = Ugoke refuses Detached (Issued -> Refused)
+    set exitCode = One
+  event interrupt = User interrupts Detached (Issued -> Interrupted)
+    set exitCode = OneThirty
+    covers REQ-DET-003 "実行を始める前、サーバーにつないでいるあいだに Ctrl+C を押すと、実行を始めずに、終了ステータス 130 で終わる"
+
+  rule REQ-DET-001 "--detach を付けると、常駐プロセスで実行を始め、追いかけずに終了ステータス 0 で終わる。答え待ちは ugoke inbox list に出る" {
+    StartedExitsZero: always Detached in Started has exitCode == Zero
+  }
+  rule REQ-DET-002 "定義や --input に問題があるとき、常駐プロセスがステップを動かさないときは、実行を始めずに終了ステータス 1 で終わる。自分の Worker では動かさない" {
+    allow Ugoke starts Detached only when inputsOk and served
+    allow Ugoke refuses Detached only when not (inputsOk and served)
+    RefusedExitsOne: always Detached in Refused has exitCode == One
+  }
+
+  rule REQ-DET-003 "実行を始める前、サーバーにつないでいるあいだに Ctrl+C を押すと、実行を始めずに、終了ステータス 130 で終わる" {
+    allow User interrupts Detached only when inputsOk
+    InterruptedExitsOneThirty: always Detached in Interrupted has exitCode == OneThirty
+  }
+
+  scenario AC-DET-001 "常駐プロセスで実行を始める" {
+    User runs d1 with inputsOk true, served true
+    Ugoke starts d1
+    then stage(d1) == Started and d1.exitCode == Zero
+  }
+  scenario AC-DET-002 "常駐プロセスがステップを動かさなければ、始めない" {
+    User runs d1 with inputsOk true, served false
+    Ugoke refuses d1
+    then stage(d1) == Refused and d1.exitCode == One
+  }
+  scenario AC-DET-003 "問題のある定義や --input では、始めない" {
+    User runs d1 with inputsOk false, served true
+    Ugoke refuses d1
+    then d1 is Refused
+  }
+
+  forbidden FB-DET-001 "常駐プロセスがステップを動かさないのに、始めない" {
+    User runs d1 with inputsOk true, served false
+    Ugoke starts d1
+    then rejected
+  }
+  forbidden FB-DET-002 "問題のある定義や --input で、始めない" {
+    User runs d1 with inputsOk false, served true
+    Ugoke starts d1
+    then rejected
+  }
+  forbidden FB-DET-003 "始められるのに、断らない" {
+    User runs d1 with inputsOk true, served true
+    Ugoke refuses d1
+    then rejected
+  }
+  scenario AC-DET-004 "始める前に Ctrl+C を押すと、始めずに終わる" {
+    User runs d1 with inputsOk true, served true
+    User interrupts d1
+    then stage(d1) == Interrupted and d1.exitCode == OneThirty
+  }
+  forbidden FB-DET-004 "始める前に Ctrl+C を押したのに、始めない" {
+    User runs d1 with inputsOk true, served true
+    User interrupts d1
+    Ugoke starts d1
+    then rejected
+  }
+  forbidden FB-DET-005 "問題のある定義や --input で、Ctrl+C を待たない" {
+    User runs d1 with inputsOk false, served true
+    User interrupts d1
+    then rejected
+  }
+}
+verify {
+  instances Detached = 1
+}

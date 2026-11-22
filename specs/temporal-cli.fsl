@@ -1,0 +1,173 @@
+fsl 5
+// Requirements for the Temporal CLI that starts the development server of the resident process:
+// the release that ugoke pins and downloads to its cache.
+// Source: docs/reference/commands/daemon.md ("Temporal CLI"). The checksum, the platforms, and the
+// safety of the cache directory are kept here only, and not in the docs.
+//
+// MODEL-TCL-001: whether ugoke has a release for the platform, whether the cache directory is
+//                safe, whether the release is in the cache, and whether a download matches its
+//                checksum are given when the resident process asks for the Temporal CLI. It asks
+//                only to start its development server, so a resident process with --address
+//                needs no Temporal CLI (dev-server.fsl, REQ-DEV-001).
+// MODEL-TCL-002: the Temporal CLI only is modeled, not the server that it starts.
+requirements TemporalCli {
+  enum Reason { NoReason, UnsafeCache, Unsupported, Mismatch }
+  actor Daemon, Ugoke
+
+  entity Fetch {
+    supported: Bool = false
+    cacheSafe: Bool = false
+    cached: Bool = false
+    checksumOk: Bool = false
+    downloaded: Bool = false
+    stored: Bool = false
+    reason: Reason = NoReason
+    lifecycle Unasked -> Asked -> Ready
+    lifecycle Asked -> Downloading -> Ready
+    lifecycle Asked -> Failed
+    lifecycle Downloading -> Failed
+  }
+
+  def refusalOf(safe: Bool) = if safe then Unsupported else UnsafeCache
+
+  event ask = Daemon asks Fetch with supported, cacheSafe, cached, checksumOk (Unasked -> Asked)
+    covers REQ-TCL-001 "常駐プロセスの開発サーバーを起動する Temporal CLI を決める"
+  event useCached = Ugoke reuses Fetch (Asked -> Ready)
+  event refuse = Ugoke refuses Fetch with reason (Asked -> Failed)
+  event download = Ugoke downloads Fetch (Asked -> Downloading)
+    set downloaded = true
+  event store = Ugoke stores Fetch (Downloading -> Ready)
+    set stored = true
+  event discard = Ugoke discards Fetch (Downloading -> Failed)
+    set reason = Mismatch
+
+  rule REQ-TCL-003 "ugoke が決めたバージョンを使う。キャッシュにあれば、ダウンロードしない" {
+    allow Ugoke reuses Fetch only when supported and cacheSafe and cached
+    allow Ugoke downloads Fetch only when supported and cacheSafe and not cached
+    CachedDownloadsNothing: always Fetch in Ready has (not cached or not downloaded)
+    MissingIsDownloaded: always Fetch in Ready has (cached or (downloaded and stored))
+  }
+  rule REQ-TCL-004 "対応しない環境と、ほかのユーザーが使えるキャッシュのディレクトリでは、ダウンロードせずに失敗する" {
+    allow Ugoke refuses Fetch only when (not supported or not cacheSafe) and input reason == refusalOf(cacheSafe)
+    ReadyNeedsSafePlace: always Fetch in Ready has (supported and cacheSafe)
+  }
+  rule REQ-TCL-005 "ダウンロードしたファイルは、チェックサムを確かめる。合わなければ、使わず、キャッシュにも残さずに失敗する" {
+    allow Ugoke stores Fetch only when checksumOk
+    allow Ugoke discards Fetch only when not checksumOk
+    MismatchIsNotKept: always Fetch in Failed has not stored
+    FailureHasReason: always Fetch in Failed has (reason != NoReason and (downloaded == (reason == Mismatch)))
+    StoredMatches: always Fetch in Ready has (not stored or checksumOk)
+  }
+
+  scenario AC-TCL-002 "初めてのときは、ダウンロードして使う" {
+    Daemon asks f1 with supported true, cacheSafe true, cached false, checksumOk true
+    Ugoke downloads f1
+    Ugoke stores f1
+    then f1 is Ready
+  }
+  scenario AC-TCL-003 "キャッシュにあれば、それを使う" {
+    Daemon asks f1 with supported true, cacheSafe true, cached true, checksumOk false
+    Ugoke reuses f1
+    then f1 is Ready
+  }
+  scenario AC-TCL-004 "チェックサムが合わなければ、失敗する" {
+    Daemon asks f1 with supported true, cacheSafe true, cached false, checksumOk false
+    Ugoke downloads f1
+    Ugoke discards f1
+    then f1 is Failed
+  }
+  scenario AC-TCL-005 "対応しない環境では、失敗する" {
+    Daemon asks f1 with supported false, cacheSafe true, cached false, checksumOk true
+    Ugoke refuses f1 with reason Unsupported
+    then f1 is Failed
+  }
+  scenario AC-TCL-006 "ほかのユーザーが使えるキャッシュのディレクトリでは、失敗する" {
+    Daemon asks f1 with supported true, cacheSafe false, cached true, checksumOk true
+    Ugoke refuses f1 with reason UnsafeCache
+    then f1 is Failed
+  }
+
+  forbidden FB-TCL-002 "キャッシュにあるのに、ダウンロードしない" {
+    Daemon asks f1 with supported true, cacheSafe true, cached true, checksumOk true
+    Ugoke downloads f1
+    then rejected
+  }
+  forbidden FB-TCL-003 "チェックサムが合わないものを、使わない" {
+    Daemon asks f1 with supported true, cacheSafe true, cached false, checksumOk false
+    Ugoke downloads f1
+    Ugoke stores f1
+    then rejected
+  }
+  forbidden FB-TCL-004 "対応しない環境で、ダウンロードしない" {
+    Daemon asks f1 with supported false, cacheSafe true, cached false, checksumOk true
+    Ugoke downloads f1
+    then rejected
+  }
+  forbidden FB-TCL-005 "安全でないキャッシュのものを、使わない" {
+    Daemon asks f1 with supported true, cacheSafe false, cached true, checksumOk true
+    Ugoke reuses f1
+    then rejected
+  }
+  forbidden FB-TCL-006 "安全でないキャッシュに、ダウンロードしない" {
+    Daemon asks f1 with supported true, cacheSafe false, cached false, checksumOk true
+    Ugoke downloads f1
+    then rejected
+  }
+  forbidden FB-TCL-007 "チェックサムが合うものを、捨てない" {
+    Daemon asks f1 with supported true, cacheSafe true, cached false, checksumOk true
+    Ugoke downloads f1
+    Ugoke discards f1
+    then rejected
+  }
+  forbidden FB-TCL-011 "使える環境とキャッシュで、失敗しない" {
+    Daemon asks f1 with supported true, cacheSafe true, cached false, checksumOk true
+    Ugoke refuses f1 with reason Unsupported
+    then rejected
+  }
+  forbidden FB-TCL-012 "安全でないキャッシュの失敗を、対応しない環境の失敗にしない" {
+    Daemon asks f1 with supported false, cacheSafe false, cached false, checksumOk true
+    Ugoke refuses f1 with reason Unsupported
+    then rejected
+  }
+  forbidden FB-TCL-013 "対応しない環境の失敗を、安全でないキャッシュの失敗にしない" {
+    Daemon asks f1 with supported false, cacheSafe true, cached false, checksumOk true
+    Ugoke refuses f1 with reason UnsafeCache
+    then rejected
+  }
+  forbidden FB-TCL-014 "ダウンロードする前に、キャッシュに残さない" {
+    Daemon asks f1 with supported true, cacheSafe true, cached false, checksumOk true
+    Ugoke stores f1
+    then rejected
+  }
+  forbidden FB-TCL-015 "求められる前に、ダウンロードしない" {
+    Ugoke downloads f1
+    then rejected
+  }
+  forbidden FB-TCL-016 "求められたあとに、もう 1 度求めない" {
+    Daemon asks f1 with supported true, cacheSafe true, cached true, checksumOk true
+    Daemon asks f1 with supported true, cacheSafe true, cached true, checksumOk true
+    then rejected
+  }
+  forbidden FB-TCL-018 "求められる前に、キャッシュのものを使わない" {
+    Ugoke reuses f1
+    then rejected
+  }
+  forbidden FB-TCL-019 "求められる前に、失敗しない" {
+    Ugoke refuses f1 with reason Unsupported
+    then rejected
+  }
+  forbidden FB-TCL-020 "ダウンロードする前に、捨てない" {
+    Daemon asks f1 with supported true, cacheSafe true, cached false, checksumOk false
+    Ugoke discards f1
+    then rejected
+  }
+  forbidden FB-TCL-021 "決めたあとに、ダウンロードしない" {
+    Daemon asks f1 with supported true, cacheSafe true, cached true, checksumOk true
+    Ugoke reuses f1
+    Ugoke downloads f1
+    then rejected
+  }
+}
+verify {
+  instances Fetch = 1
+}

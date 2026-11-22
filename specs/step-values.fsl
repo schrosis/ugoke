@@ -1,0 +1,150 @@
+fsl 5
+// Requirements for the values that a step receives and gives: their size limit, and the trailing
+// newline of the output of a script.
+// Source: docs/reference/workflow-definition.md ("式")
+//
+// MODEL-SVL-001: whether the values that the step receives or gives are over 512 KiB, and how many
+//                newlines end the standard output of its script, are given when the step is
+//                written. More than two newlines behave as two.
+// MODEL-SVL-002: the values that the step receives are its inputs together with the values of
+//                earlier steps and of the workflow input that its run, prompt, env, and outputs
+//                reference, and env of the workflow. For an AI step, they also include the
+//                options of with after their expressions are evaluated, and for a wait step with
+//                branches, the values that its conditions reference. For a wait step whose method
+//                answers in the Worker, they include the options of with and the run, with its ID
+//                and its input, which the method receives (worker-wait.fsl). A reference in the
+//                arguments of a call, such as trim(steps.a.outputs.text), is referenced too
+//                (expression-functions.fsl).
+// MODEL-SVL-003: with continueOnError, outputs over 512 KiB end the step as a failure that goes
+//                on, with every output null. Received values over 512 KiB fail the run still,
+//                because the workflow checks them before the step starts (continue-on-error.fsl).
+requirements StepValues {
+  type Newlines = 0..2
+  actor Author, Worker
+
+  entity StepValues {
+    inputsOver: Bool = false
+    outputsOver: Bool = false
+    newlines: Newlines = 0
+    kept: Newlines = 0
+    lifecycle Unwritten -> Written -> Running -> Succeeded
+    lifecycle Written -> Refused
+    lifecycle Running -> Overflowed
+  }
+
+  def trimmed(n: Newlines) = if n == 0 then 0 else n - 1
+
+  event write = Author writes StepValues with inputsOver, outputsOver, newlines (Unwritten -> Written)
+    covers REQ-SVL-001 "ステップが受け取る値と出す値は、それぞれ JSON で 512 KiB まで"
+  event start = Worker starts StepValues (Written -> Running)
+  event refuse = Worker refuses StepValues (Written -> Refused)
+  event finish = Worker finishes StepValues with kept (Running -> Succeeded)
+  event overflow = Worker overflows StepValues (Running -> Overflowed)
+
+  rule REQ-SVL-002 "受け取る値が 512 KiB を超えるステップは、実行せずに失敗する" {
+    allow Worker refuses StepValues only when inputsOver
+    never Worker starts StepValues when inputsOver
+  }
+  rule REQ-SVL-003 "出す値が 512 KiB を超えるステップは、実行したあとに失敗する" {
+    allow Worker overflows StepValues only when outputsOver
+    never Worker finishes StepValues when outputsOver
+  }
+  rule REQ-SVL-004 "result.stdout と result.stderr は、最後の改行を 1 つ取り除いた値" {
+    allow Worker finishes StepValues only when input kept == trimmed(newlines)
+    KeptIsTrimmed: always StepValues in Succeeded has kept == trimmed(newlines)
+  }
+
+  scenario AC-SVL-001 "最後の改行を 1 つ取り除いて、値を出す" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 1
+    Worker starts v1
+    Worker finishes v1 with kept 0
+    then v1 is Succeeded
+  }
+  scenario AC-SVL-002 "受け取る値が大きすぎるステップは、実行しない" {
+    Author writes v1 with inputsOver true, outputsOver false, newlines 0
+    Worker refuses v1
+    then v1 is Refused
+  }
+  scenario AC-SVL-003 "出す値が大きすぎるステップは、失敗する" {
+    Author writes v1 with inputsOver false, outputsOver true, newlines 0
+    Worker starts v1
+    Worker overflows v1
+    then v1 is Overflowed
+  }
+
+  scenario AC-SVL-004 "改行で終わらない出力は、そのまま出す" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 0
+    Worker starts v1
+    Worker finishes v1 with kept 0
+    then v1 is Succeeded
+  }
+  scenario AC-SVL-005 "改行が 2 つで終わる出力は、改行を 1 つ残す" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 2
+    Worker starts v1
+    Worker finishes v1 with kept 1
+    then v1 is Succeeded
+  }
+
+  forbidden FB-SVL-001 "受け取る値が大きすぎるステップを、実行しない" {
+    Author writes v1 with inputsOver true, outputsOver false, newlines 0
+    Worker starts v1
+    then rejected
+  }
+  forbidden FB-SVL-002 "出す値が大きすぎるステップを、成功にしない" {
+    Author writes v1 with inputsOver false, outputsOver true, newlines 0
+    Worker starts v1
+    Worker finishes v1 with kept 0
+    then rejected
+  }
+  forbidden FB-SVL-003 "改行が 2 つで終わる出力から、改行を 2 つとも取り除かない" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 2
+    Worker starts v1
+    Worker finishes v1 with kept 0
+    then rejected
+  }
+  forbidden FB-SVL-004 "改行で終わる出力の改行を、残さない" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 1
+    Worker starts v1
+    Worker finishes v1 with kept 1
+    then rejected
+  }
+  forbidden FB-SVL-005 "大きすぎない値のステップを、拒まない" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 0
+    Worker refuses v1
+    then rejected
+  }
+  forbidden FB-SVL-006 "大きすぎない値を、大きすぎるとしない" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 0
+    Worker starts v1
+    Worker overflows v1
+    then rejected
+  }
+  forbidden FB-SVL-007 "実行する前に、値を出さない" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 0
+    Worker finishes v1 with kept 0
+    then rejected
+  }
+  forbidden FB-SVL-008 "実行したステップを、受け取る値で拒まない" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 0
+    Worker starts v1
+    Worker refuses v1
+    then rejected
+  }
+  forbidden FB-SVL-009 "書く前のステップを、実行しない" {
+    Worker starts v1
+    then rejected
+  }
+  forbidden FB-SVL-010 "書いたステップを、書き直さない" {
+    Author writes v1 with inputsOver false, outputsOver false, newlines 0
+    Author writes v1 with inputsOver false, outputsOver false, newlines 0
+    then rejected
+  }
+  forbidden FB-SVL-011 "実行する前に、出す値が大きすぎるとしない" {
+    Author writes v1 with inputsOver false, outputsOver true, newlines 0
+    Worker overflows v1
+    then rejected
+  }
+}
+verify {
+  instances StepValues = 1
+}

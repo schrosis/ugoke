@@ -1,0 +1,170 @@
+fsl 5
+// Requirements for the environment variables of a script step: env of the workflow and of the
+// step, dotenv, and which value a script sees for a name. An AI step gets env of the workflow and
+// of the step, and dotenv, in the same way, and its provider passes them to the AI over the
+// variables that it inherits from the process that runs the step, as a script does (script-run.fsl,
+// REQ-SCR-002). env.<name> in a condition of a branch sees the variables in the same order
+// (condition.fsl, MODEL-CND-003).
+// Source: docs/reference/workflow-definition.md ("最上位の項目", "script ステップ", "実行")
+//
+// MODEL-ENV-001: one name of an environment variable is modeled. Whether the name and the type of
+//                its value keep the rules, whether the definition names a dotenv file, and whether
+//                its path keeps the rule are given when the definition is written.
+// MODEL-ENV-002: whether the dotenv file can be read inside the project root, and which of the
+//                dotenv file, the process, env of the workflow, and env of the step give a value
+//                for the name, are given when the step runs. A dotenv file that is not in the
+//                format of dotenv-file.fsl cannot be read either.
+// MODEL-ENV-003: values are not modeled. A number or a boolean in env becomes a string as written,
+//                as the reference says. valueOk is false also for a number or a boolean whose text
+//                YAML reads differently, such as 1.10, 1.0, 00123, 0x1F, 0o17, 1e3, +1, -0, .5,
+//                .inf, .nan, an integer with too many digits, such as 12345678901234567890, True,
+//                TRUE, or False, in env of the workflow or of a step, because the parsed value no
+//                longer shows how it was written; a quoted value, a block scalar such as |-, and an
+//                expression are text as written; it is reported with the other errors of the
+//                definition, and the key is still checked (parse-definition.fsl).
+// MODEL-ENV-004: the dotenv file is read each time a script runs, so a change of the file reaches
+//                the steps after it, and its values never enter the history of the run, while the
+//                values of env do. One run of a script is modeled, and the history is not.
+requirements ScriptEnv {
+  enum Source { NoValue, FromDotenv, FromProcess, FromWorkflow, FromStep }
+  actor Author, Worker
+
+  entity EnvVar {
+    nameOk: Bool = false
+    valueOk: Bool = false
+    dotenvGiven: Bool = false
+    dotenvPathOk: Bool = false
+    dotenvReadable: Bool = false
+    inDotenv: Bool = false
+    inProcess: Bool = false
+    inWorkflow: Bool = false
+    inStep: Bool = false
+    seen: Source = NoValue
+    lifecycle Unwritten -> Written -> Accepted -> Started -> Ran
+    lifecycle Written -> Invalid
+    lifecycle Started -> Failed
+  }
+
+  def pathOk(g: Bool, p: Bool) = not g or p
+  def sourceOf(d: Bool, p: Bool, w: Bool, s: Bool) =
+    if s then FromStep else if w then FromWorkflow else if p then FromProcess
+    else if d then FromDotenv else NoValue
+
+  event write = Author writes EnvVar with nameOk, valueOk, dotenvGiven, dotenvPathOk (Unwritten -> Written)
+    covers REQ-ENV-001 "環境変数は、定義の env、ステップの env、dotenv のファイルで渡す"
+  event accept = Worker accepts EnvVar (Written -> Accepted)
+  event reject = Worker rejects EnvVar (Written -> Invalid)
+  event start = Worker starts EnvVar with dotenvReadable, inDotenv, inProcess, inWorkflow, inStep (Accepted -> Started)
+    covers REQ-ENV-001 "環境変数は、定義の env、ステップの env、dotenv のファイルで渡す"
+  event run = Worker runs EnvVar with seen (Started -> Ran)
+  event fail = Worker fails EnvVar (Started -> Failed)
+
+  rule REQ-ENV-002 "環境変数の名前は、英字か _ で始め、英字、数字、_ だけで書く。値は、文字列、数、真偽値で書く。数と真偽値は、YAML が書いたのと同じ形に読むものだけを書ける。dotenv は、プロジェクトのルートからの相対パスで、ルートの外に出ない" {
+    allow Worker accepts EnvVar only when nameOk and valueOk and pathOk(dotenvGiven, dotenvPathOk)
+    allow Worker rejects EnvVar only when not (nameOk and valueOk and pathOk(dotenvGiven, dotenvPathOk))
+    AcceptedIsOk: always EnvVar in Accepted has (nameOk and valueOk and pathOk(dotenvGiven, dotenvPathOk))
+  }
+  rule REQ-ENV-003 "dotenv のファイルを読めないとき、ルートの外を指しているときは、ステップは失敗する" {
+    allow Worker fails EnvVar only when dotenvGiven and not dotenvReadable
+    never Worker runs EnvVar when dotenvGiven and not dotenvReadable
+  }
+  rule REQ-ENV-004 "同じ名前の環境変数は、dotenv のファイル、引き継いだ環境変数、ワークフローの env、ステップの env の順に、あとのものが使われる" {
+    allow Worker runs EnvVar only when input seen == sourceOf(inDotenv and dotenvGiven, inProcess, inWorkflow, inStep)
+    SeenFollowsOrder: always EnvVar in Ran has seen == sourceOf(inDotenv and dotenvGiven, inProcess, inWorkflow, inStep)
+  }
+
+  scenario AC-ENV-001 "ステップの env がいちばん強い" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven true, dotenvPathOk true
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable true, inDotenv true, inProcess true, inWorkflow true, inStep true
+    Worker runs e1 with seen FromStep
+    then e1 is Ran
+  }
+  scenario AC-ENV-002 "引き継いだ環境変数は、dotenv のファイルより強い" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven true, dotenvPathOk true
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable true, inDotenv true, inProcess true, inWorkflow false, inStep false
+    Worker runs e1 with seen FromProcess
+    then e1 is Ran
+  }
+  scenario AC-ENV-003 "dotenv のファイルだけにある値を使う" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven true, dotenvPathOk true
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable true, inDotenv true, inProcess false, inWorkflow false, inStep false
+    Worker runs e1 with seen FromDotenv
+    then e1 is Ran
+  }
+  scenario AC-ENV-004 "読めない dotenv のファイルで、ステップは失敗する" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven true, dotenvPathOk true
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable false, inDotenv false, inProcess true, inWorkflow false, inStep false
+    Worker fails e1
+    then e1 is Failed
+  }
+  scenario AC-ENV-005 "決まりに合わない名前は、定義のエラーになる" {
+    Author writes e1 with nameOk false, valueOk true, dotenvGiven false, dotenvPathOk false
+    Worker rejects e1
+    then e1 is Invalid
+  }
+
+  forbidden FB-ENV-001 "ワークフローの env より、引き継いだ環境変数を使わない" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven false, dotenvPathOk false
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable false, inDotenv false, inProcess true, inWorkflow true, inStep false
+    Worker runs e1 with seen FromProcess
+    then rejected
+  }
+  forbidden FB-ENV-002 "引き継いだ環境変数より、dotenv のファイルを使わない" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven true, dotenvPathOk true
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable true, inDotenv true, inProcess true, inWorkflow false, inStep false
+    Worker runs e1 with seen FromDotenv
+    then rejected
+  }
+  forbidden FB-ENV-003 "ステップの env より、ワークフローの env を使わない" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven false, dotenvPathOk false
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable false, inDotenv false, inProcess false, inWorkflow true, inStep true
+    Worker runs e1 with seen FromWorkflow
+    then rejected
+  }
+  forbidden FB-ENV-004 "読めない dotenv のファイルで、ステップを実行しない" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven true, dotenvPathOk true
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable false, inDotenv false, inProcess true, inWorkflow false, inStep false
+    Worker runs e1 with seen FromProcess
+    then rejected
+  }
+  forbidden FB-ENV-005 "ルートの外に出る dotenv のパスを、受け付けない" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven true, dotenvPathOk false
+    Worker accepts e1
+    then rejected
+  }
+  forbidden FB-ENV-006 "dotenv を書かないのに、dotenv のファイルの値を使わない" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven false, dotenvPathOk false
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable false, inDotenv true, inProcess false, inWorkflow false, inStep false
+    Worker runs e1 with seen FromDotenv
+    then rejected
+  }
+  forbidden FB-ENV-007 "dotenv を書かないのに、読めないとしてステップを失敗にしない" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven false, dotenvPathOk false
+    Worker accepts e1
+    Worker starts e1 with dotenvReadable false, inDotenv false, inProcess true, inWorkflow false, inStep false
+    Worker fails e1
+    then rejected
+  }
+  forbidden FB-ENV-008 "正しい定義を、エラーにしない" {
+    Author writes e1 with nameOk true, valueOk true, dotenvGiven true, dotenvPathOk true
+    Worker rejects e1
+    then rejected
+  }
+  forbidden FB-ENV-009 "null やリストの値を、受け付けない" {
+    Author writes e1 with nameOk true, valueOk false, dotenvGiven false, dotenvPathOk false
+    Worker accepts e1
+    then rejected
+  }
+}
+verify {
+  instances EnvVar = 1
+}

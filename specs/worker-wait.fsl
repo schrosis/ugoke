@@ -1,0 +1,137 @@
+fsl 5
+// Requirements for a wait step whose method answers in the Worker of the run, such as of the
+// resident process, also while no process follows the run.
+// Source: docs/explanation/architecture.md ("Worker"). A method declares respondIn: worker, which
+// the intermediate form of the step keeps. A method that answers in the process that follows the
+// run, such as terminal, is in wait-step.fsl. github_pr is such a method (github-pr.fsl).
+//
+// MODEL-WWT-001: one wait of such a step is modeled. Whether an answer comes from the method in the
+//                Worker or from outside, such as from ugoke inbox answer or the process that
+//                follows the run, whether it fits the declared answers, and whether it is over
+//                512 KiB are given when it comes. ugoke run and ugoke attach only wait for such a
+//                step, and do not ask.
+// MODEL-WWT-002: the Worker runs the method in an activity without a timeout, which beats every few
+//                seconds. A Worker that stops, such as when the resident process stops, stops the
+//                method and fails the attempt as retryable, and the next Worker asks again. A
+//                Worker that dies misses the heartbeats, which also leads to another attempt. A
+//                Worker without the method, a with that the method refuses, and a method that
+//                throws fail the step without a retry. The method receives the run, the step, and
+//                the visit, so that it can tell runs apart, and when the visit of the step started
+//                to wait, in workflow time, which every attempt receives alike, so that it can tell
+//                what happened while the step waited. A run that started before the time was given,
+//                and a time that is not a date, fall back to when the activity was first scheduled.
+//                The method can write lines to the log of the Worker: the resident process writes
+//                them with the project and the step, and the Worker of ugoke run writes nothing, to
+//                keep the progress intact. A line that cannot be written does not change the wait.
+//                The Worker that ugoke run starts for itself answers too, with the plugins of the
+//                project, and stops the method when the command detaches, so that ugoke attach or
+//                the resident process asks again.
+// MODEL-WWT-003: a cancelled wait ends after its method stopped asking, so that no one answers a
+//                closed step.
+// MODEL-WWT-004: ugoke before this way of answering refuses an intermediate form that has
+//                respondIn, but versions do not mix, because a command uses the resident process
+//                only when it runs the same version (run-command.fsl, MODEL-CMD-001).
+requirements WorkerWait {
+  actor Worker, User
+
+  entity Wait {
+    outside: Bool = false
+    fits: Bool = false
+    tooLarge: Bool = false
+    askedAgain: Bool = false
+    methodStopped: Bool = false
+    lifecycle Pending -> Waiting -> Answered
+    lifecycle Waiting -> Waiting
+    lifecycle Waiting -> Failed
+    lifecycle Waiting -> Cancelling -> Cancelled
+    lifecycle Cancelling -> Cancelling
+  }
+
+  event start = Worker starts Wait (Pending -> Waiting)
+    covers REQ-WWT-001 "Worker で答える待ち方のステップは、実行の Worker が待ち方を動かして答える。追いかけるプロセスがなくても進む"
+  event answer = Worker answers Wait with outside, fits, tooLarge (Waiting -> Answered)
+  event refuse = Worker refuses Wait with outside, fits, tooLarge (Waiting -> Failed)
+  event fail = Worker fails Wait (Waiting -> Failed)
+    covers REQ-WWT-003 "待ち方が失敗したとき、宣言に合わない答えと、512 KiB を超える答えは、ステップの失敗にする。やり直さない"
+  event stop = Worker stops Wait (Waiting -> Waiting)
+    set askedAgain = true
+    covers REQ-WWT-004 "Worker が止まると、待ち方を止める。次の Worker が、もう一度聞く"
+  event cancel = User cancels Wait (Waiting -> Cancelling)
+    covers REQ-WWT-005 "取り消すと、待ち方を止めてから、取り消しで終わる"
+  event stopMethod = Worker stopsMethod Wait (Cancelling -> Cancelling)
+    set methodStopped = true
+    covers REQ-WWT-005 "取り消すと、待ち方を止めてから、取り消しで終わる"
+  event endCancel = Worker endsCancel Wait (Cancelling -> Cancelled)
+    covers REQ-WWT-005 "取り消すと、待ち方を止めてから、取り消しで終わる"
+
+  rule REQ-WWT-002 "外からの答えは、受け付けない。答えられるのは、定義が書いた待ち方だけ" {
+    allow Worker answers Wait only when not input outside and input fits and not input tooLarge
+    AnsweredByMethod: always Wait in Answered has not outside
+  }
+  rule REQ-WWT-003 "待ち方が失敗したとき、宣言に合わない答えと、512 KiB を超える答えは、ステップの失敗にする。やり直さない" {
+    allow Worker refuses Wait only when not input outside and (not input fits or input tooLarge)
+  }
+  rule REQ-WWT-005 "取り消すと、待ち方を止めてから、取り消しで終わる" {
+    allow Worker endsCancel Wait only when methodStopped
+    CancelStopsMethod: always Wait in Cancelled has methodStopped
+  }
+
+  scenario AC-WWT-001 "待ち方が答えれば、次に進む" {
+    Worker starts w1
+    Worker answers w1 with outside false, fits true, tooLarge false
+    then w1 is Answered
+  }
+  scenario AC-WWT-002 "Worker が止まっても、次の Worker が聞き直して答える" {
+    Worker starts w1
+    Worker stops w1
+    Worker answers w1 with outside false, fits true, tooLarge false
+    then stage(w1) == Answered and w1.askedAgain
+  }
+  scenario AC-WWT-003 "宣言に合わない答えは、ステップの失敗" {
+    Worker starts w1
+    Worker refuses w1 with outside false, fits false, tooLarge false
+    then w1 is Failed
+  }
+  scenario AC-WWT-004 "大きすぎる答えは、ステップの失敗" {
+    Worker starts w1
+    Worker refuses w1 with outside false, fits true, tooLarge true
+    then w1 is Failed
+  }
+  scenario AC-WWT-005 "取り消すと、待ち方を止めて終わる" {
+    Worker starts w1
+    User cancels w1
+    Worker stopsMethod w1
+    Worker endsCancel w1
+    then stage(w1) == Cancelled and w1.methodStopped
+  }
+
+  forbidden FB-WWT-001 "外からの答えを、受け付けない" {
+    Worker starts w1
+    Worker answers w1 with outside true, fits true, tooLarge false
+    then rejected
+  }
+  forbidden FB-WWT-002 "宣言に合わない答えを、受け付けない" {
+    Worker starts w1
+    Worker answers w1 with outside false, fits false, tooLarge false
+    then rejected
+  }
+  forbidden FB-WWT-003 "合う答えを、失敗にしない" {
+    Worker starts w1
+    Worker refuses w1 with outside false, fits true, tooLarge false
+    then rejected
+  }
+  forbidden FB-WWT-004 "外からの答えで、ステップを失敗にしない" {
+    Worker starts w1
+    Worker refuses w1 with outside true, fits false, tooLarge false
+    then rejected
+  }
+  forbidden FB-WWT-005 "待ち方を止める前に、取り消しで終わらない" {
+    Worker starts w1
+    User cancels w1
+    Worker endsCancel w1
+    then rejected
+  }
+}
+verify {
+  instances Wait = 1
+}

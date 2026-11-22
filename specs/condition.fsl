@@ -1,0 +1,179 @@
+fsl 5
+// Requirements for the condition of a branch: how it is written, what it compares, and when it
+// fails the step.
+// Source: docs/reference/workflow-definition.md ("分岐"). The values that the definition shows can
+// never be true or false are errors of the definition, which condition-types.fsl describes.
+//
+// MODEL-CND-001: whether the condition is one ${{ }} expression, and whether its operators,
+//                parentheses, references, and literals are written correctly, are given when it is
+//                written. The literals are strings in single quotes, where '' is one ', numbers
+//                such as -1 or 1.5, true, false, and null. || binds loosest, then &&, then == and
+//                !=, and then !. == and != compare two values, so a == b == c is an error. Which
+//                values it may reference is in step-references.fsl. A call of a function, such as
+//                trim(outputs.verdict), is a value as a reference is (expression-functions.fsl).
+// MODEL-CND-004: missing tells whether a reference is null because it goes through null, reads an
+//                output of a step that did not run, or reads an env.<name> that is not set.
+//                unreadable tells whether a reference cannot be read otherwise, such as a field of
+//                result.data that properties of the schema does not declare and the result does not
+//                have (ai-step.fsl, REQ-AIS-007), or an index past the end of an array, such as
+//                result.data.items[1] of one item; an index of steps.<step>.visits is under steps,
+//                and reads as null. Only the name itself makes env.<name> null; a reference below
+//                it, such as env.A.B, is an error of the definition, as a field of any value is
+//                (validate-expressions.fsl). References are read as templates read them
+//                (template-values.fsl).
+// MODEL-CND-002: one comparison or one operand is modeled when the condition is evaluated. The
+//                kinds of the two values that == or != compares, whether they are equal, and, for
+//                objects and arrays, whether they are the same value, which an equal content is
+//                not, are given then, and so is whether an operand of !, &&, or ||, or the whole
+//                condition, is true or false. && and || do not evaluate their right side when the
+//                left side decides. A reference reads only the own values that the step has, so a
+//                name that a value only inherits, such as constructor, cannot be read, and fails
+//                the step as an unreadable reference does (MODEL-CND-004).
+// MODEL-CND-003: env.<name> reads the variables that the step inherits, over which dotenv does not
+//                replace a variable, and then env of the workflow and of the step. A wait step has
+//                no env of its own. dotenv is read only for a condition that reads env, so that a
+//                file that cannot be read fails only such a step.
+requirements Condition {
+  enum Kind { TextKind, NumberKind, BooleanKind, NullKind, ObjectKind }
+  actor Author, Ugoke, Worker
+
+  entity ConditionText {
+    single: Bool = false
+    wellWritten: Bool = false
+    lifecycle Unwritten -> Written -> Accepted
+    lifecycle Written -> Invalid
+  }
+
+  entity Comparison {
+    leftKind: Kind = NullKind
+    rightKind: Kind = NullKind
+    sameValue: Bool = false
+    missing: Bool = false
+    sameObject: Bool = false
+    unreadable: Bool = false
+    holds: Bool = false
+    lifecycle Unread -> Read -> Compared
+    lifecycle Unread -> Broken
+  }
+
+  entity Operand {
+    boolean: Bool = false
+    lifecycle Untaken -> Taken -> Used
+    lifecycle Taken -> Failed
+  }
+
+  event write = Author writes ConditionText with single, wellWritten (Unwritten -> Written)
+    covers REQ-CND-001 "分岐の条件は、${{ }} の式 1 つで書く"
+  event accept = Ugoke accepts ConditionText (Written -> Accepted)
+  event reject = Ugoke rejects ConditionText (Written -> Invalid)
+
+  event read = Worker reads Comparison with leftKind, rightKind, sameValue, missing, sameObject, unreadable (Unread -> Read)
+    covers REQ-CND-003 "値は、型を変えずに比べる。動かなかったステップの値など、null になる参照は null と等しい"
+  event compare = Worker compares Comparison with holds (Read -> Compared)
+  event miss = Worker misses Comparison with unreadable (Unread -> Broken)
+    covers REQ-CND-006 "動かなかったステップの outputs、設定されていない env.<名前>、null を通る参照だけが null。ほかに読めない参照は、ステップを失敗させる"
+
+  event take = Worker takes Operand with boolean (Untaken -> Taken)
+    covers REQ-CND-004 "!、&&、|| の値と、条件の値は、true か false でなければならない。そうでなければ、ステップは失敗する"
+  event use = Worker uses Operand (Taken -> Used)
+  event fail = Worker fails Operand (Taken -> Failed)
+
+  rule REQ-CND-002 "条件は、==、!=、&&、||、!、かっこ、参照、文字列、数、true、false、null で書く。書き方が正しくなければ、定義のエラー" {
+    allow Ugoke accepts ConditionText only when single and wellWritten
+    allow Ugoke rejects ConditionText only when not (single and wellWritten)
+  }
+  rule REQ-CND-005 "オブジェクトと配列は、中身では比べない。中身が同じでも、別の値どうしは等しくない" {
+    allow Worker reads Comparison only when input leftKind != ObjectKind or input rightKind != ObjectKind or not input sameValue or input sameObject
+  }
+  rule REQ-CND-006 "動かなかったステップの outputs、設定されていない env.<名前>、null を通る参照だけが null。ほかに読めない参照は、ステップを失敗させる" {
+    allow Worker reads Comparison only when not input unreadable
+    allow Worker misses Comparison only when input unreadable
+  }
+  rule REQ-CND-003 "値は、型を変えずに比べる。動かなかったステップの値など、null になる参照は null と等しい" {
+    allow Worker reads Comparison only when not input missing or input leftKind == NullKind
+    allow Worker compares Comparison only when input holds == (leftKind == rightKind and sameValue)
+    HoldsOnlyForSameKind: always Comparison in Compared has holds == (leftKind == rightKind and sameValue)
+  }
+  rule REQ-CND-004 "!、&&、|| の値と、条件の値は、true か false でなければならない。そうでなければ、ステップは失敗する" {
+    allow Worker uses Operand only when boolean
+    allow Worker fails Operand only when not boolean
+  }
+
+  scenario AC-CND-001 "${{ }} の式 1 つで書いた条件を受け付ける" {
+    Author writes c1 with single true, wellWritten true
+    Ugoke accepts c1
+    then c1 is Accepted
+  }
+  scenario AC-CND-002 "${{ }} の外に文字のある条件は、定義のエラーになる" {
+    Author writes c1 with single false, wellWritten true
+    Ugoke rejects c1
+    then c1 is Invalid
+  }
+  scenario AC-CND-003 "同じ型の同じ値は、等しい" {
+    Worker reads m1 with leftKind TextKind, rightKind TextKind, sameValue true, missing false, sameObject false, unreadable false
+    Worker compares m1 with holds true
+    then m1 is Compared
+  }
+  scenario AC-CND-004 "動かなかったステップの値など、null になる参照は null と等しい" {
+    Worker reads m1 with leftKind NullKind, rightKind NullKind, sameValue true, missing true, sameObject false, unreadable false
+    Worker compares m1 with holds true
+    then m1 is Compared
+  }
+  scenario AC-CND-005 "真偽値でない値を && に使うと、ステップは失敗する" {
+    Worker takes o1 with boolean false
+    Worker fails o1
+    then o1 is Failed
+  }
+
+  forbidden FB-CND-007 "中身が同じでも、別のオブジェクトを等しいことにしない" {
+    Worker reads m1 with leftKind ObjectKind, rightKind ObjectKind, sameValue true, missing false, sameObject false, unreadable false
+    then rejected
+  }
+  scenario AC-CND-006 "同じ値を参照したオブジェクトは、等しい" {
+    Worker reads m1 with leftKind ObjectKind, rightKind ObjectKind, sameValue true, missing false, sameObject true, unreadable false
+    Worker compares m1 with holds true
+    then m1 is Compared
+  }
+  scenario AC-CND-007 "properties にない、結果にない result.data の項目は、ステップを失敗させる" {
+    Worker misses m1 with unreadable true
+    then m1 is Broken
+  }
+  forbidden FB-CND-008 "読めない参照を、null として比べない" {
+    Worker reads m1 with leftKind NullKind, rightKind NullKind, sameValue true, missing true, sameObject false, unreadable true
+    then rejected
+  }
+  forbidden FB-CND-001 "書き方の正しくない条件を、受け付けない" {
+    Author writes c1 with single true, wellWritten false
+    Ugoke accepts c1
+    then rejected
+  }
+  forbidden FB-CND-002 "型の違う値を、等しいことにしない" {
+    Worker reads m1 with leftKind NumberKind, rightKind TextKind, sameValue true, missing false, sameObject false, unreadable false
+    Worker compares m1 with holds true
+    then rejected
+  }
+  forbidden FB-CND-003 "ない値を、null 以外にしない" {
+    Worker reads m1 with leftKind TextKind, rightKind TextKind, sameValue true, missing true, sameObject false, unreadable false
+    then rejected
+  }
+  forbidden FB-CND-004 "真偽値でない値を、成り立つことにしない" {
+    Worker takes o1 with boolean false
+    Worker uses o1
+    then rejected
+  }
+  forbidden FB-CND-005 "真偽値の値で、失敗しない" {
+    Worker takes o1 with boolean true
+    Worker fails o1
+    then rejected
+  }
+  forbidden FB-CND-006 "正しく書いた条件を、拒まない" {
+    Author writes c1 with single true, wellWritten true
+    Ugoke rejects c1
+    then rejected
+  }
+}
+verify {
+  instances ConditionText = 1
+  instances Comparison = 1
+  instances Operand = 1
+}

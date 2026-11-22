@@ -1,0 +1,165 @@
+fsl 5
+// Requirements for ugoke log: it shows the progress that the project recorded for a run, also
+// after the run ended, and can follow a run until it ends.
+// Source: docs/reference/commands/log.md, docs/guide/run.md ("進み具合を見る")
+//
+// MODEL-LOG-001: one command is modeled. Whether the project is found, whether the log of the
+//                project has events of the run, whether --follow is given, whether the server can
+//                be opened for --follow, and whether the run still runs are given when it is
+//                typed. --follow asks the Temporal Server whether the run runs, before it reads the
+//                log, so a run that ended has stored all of its events, and one that runs is
+//                followed until its end. The server is chosen as for ugoke run (run-command.fsl,
+//                MODEL-CMD-001). A run that the server does not know does not run. The server is
+//                asked about the ID alone, so a run of another project that runs is followed too:
+//                the log of this project has no events of it, so nothing is shown until it ends,
+//                and the command ends with 0. While it follows, the server is asked every second.
+//                Whether it stops answering is not decided by ugoke, so it is a fault event.
+// MODEL-LOG-002: the progress looks as ugoke run shows it (progress-display.fsl), without the
+//                status line, and both streams of a step go to standard output, in the order that
+//                the log keeps. --json writes each event as a line of JSON instead, the output of
+//                steps included. --tail keeps the last lines of what was recorded, not counting the
+//                empty lines at the end; it is counted in lines of the progress, or in events with
+//                --json, and 0 shows nothing of it. With --follow, the later events follow. The
+//                colors of the steps follow the definition of the workflow, whose name the
+//                workflow ID tells, as for ugoke attach; without it, they follow the order that
+//                the steps ran.
+// MODEL-LOG-003: Ctrl+C stops following and ends the command with 0; the run goes on. The
+//                configuration file is read for the progress for a person and for --follow, and
+//                the encryption key only for --follow, and a problem in either ends the command
+//                with 1 (project-config.fsl, encryption.fsl).
+requirements LogCommand {
+  enum Exit { Running, Zero, One }
+  actor User, Ugoke, Worker
+
+  entity Log {
+    inProject: Bool = false
+    hasEvents: Bool = false
+    follow: Bool = false
+    serverOk: Bool = false
+    running: Bool = false
+    exitCode: Exit = Running
+    lifecycle Typed -> Issued -> Shown -> Done
+    lifecycle Shown -> Following -> Done
+    lifecycle Issued -> Failed
+    lifecycle Following -> Failed
+  }
+
+  def shows(p: Bool, e: Bool, f: Bool, s: Bool, r: Bool) = p and (not f or s) and (e or (f and r))
+
+  event issue = User logs Log with inProject, hasEvents, follow, serverOk, running (Typed -> Issued)
+    covers REQ-LOG-001 "ugoke log は、プロジェクトが記録した実行の進み具合を表示する。終わった実行も表示する"
+  event show = Ugoke shows Log (Issued -> Shown)
+    covers REQ-LOG-001 "ugoke log は、プロジェクトが記録した実行の進み具合を表示する。終わった実行も表示する"
+  event fail = Ugoke fails Log (Issued -> Failed)
+    set exitCode = One
+    covers REQ-LOG-002 "プロジェクトがないとき、進み具合が記録されていないとき（--follow では、実行も動いていないとき）、--follow でサーバーを準備できないときは、1 で終わる"
+  event finish = Ugoke finishes Log (Shown -> Done)
+    set exitCode = Zero
+    covers REQ-LOG-003 "--follow を付けると、実行が終わるまで表示し続ける。付けないか、実行が終わっていれば、記録した分を表示して 0 で終わる"
+  event keep = Ugoke follows Log (Shown -> Following)
+    covers REQ-LOG-003 "--follow を付けると、実行が終わるまで表示し続ける。付けないか、実行が終わっていれば、記録した分を表示して 0 で終わる"
+  fault event lose = Ugoke loses Log (Following -> Failed)
+    set exitCode = One
+    covers REQ-LOG-005 "--follow で追いかけている途中に、サーバーが答えなくなると、1 で終わる"
+  event end = Worker ends Log (Following -> Done)
+    set exitCode = Zero
+    covers REQ-LOG-003 "--follow を付けると、実行が終わるまで表示し続ける。付けないか、実行が終わっていれば、記録した分を表示して 0 で終わる"
+
+  rule REQ-LOG-001 "ugoke log は、プロジェクトが記録した実行の進み具合を表示する。終わった実行も表示する" {
+    allow Ugoke shows Log only when shows(inProject, hasEvents, follow, serverOk, running)
+  }
+  rule REQ-LOG-002 "プロジェクトがないとき、進み具合が記録されていないとき（--follow では、実行も動いていないとき）、--follow でサーバーを準備できないときは、1 で終わる" {
+    allow Ugoke fails Log only when not shows(inProject, hasEvents, follow, serverOk, running)
+    FailedExitsOne: always Log in Failed has exitCode == One
+  }
+  rule REQ-LOG-003 "--follow を付けると、実行が終わるまで表示し続ける。付けないか、実行が終わっていれば、記録した分を表示して 0 で終わる" {
+    allow Ugoke follows Log only when follow and running
+    allow Ugoke finishes Log only when not (follow and running)
+    DoneExitsZero: always Log in Done has exitCode == Zero
+  }
+  rule REQ-LOG-005 "--follow で追いかけている途中に、サーバーが答えなくなると、1 で終わる" {
+    LostExitsOne: always Log in Failed has exitCode == One
+  }
+  rule REQ-LOG-004 "--follow を付けないときは、Temporal Server を使わない。常駐プロセスが動いていなくても表示する" {
+    allow Ugoke shows Log only when not follow or serverOk
+  }
+
+  scenario AC-LOG-001 "終わった実行の進み具合を、サーバーなしで表示する" {
+    User logs l1 with inProject true, hasEvents true, follow false, serverOk false, running false
+    Ugoke shows l1
+    Ugoke finishes l1
+    then stage(l1) == Done and l1.exitCode == Zero
+  }
+  scenario AC-LOG-007 "追いかけている途中にサーバーが答えなくなると、1 で終わる" {
+    User logs l1 with inProject true, hasEvents true, follow true, serverOk true, running true
+    Ugoke shows l1
+    Ugoke follows l1
+    Ugoke loses l1
+    then stage(l1) == Failed and l1.exitCode == One
+  }
+  scenario AC-LOG-002 "動いている実行を、終わるまで表示し続ける" {
+    User logs l1 with inProject true, hasEvents true, follow true, serverOk true, running true
+    Ugoke shows l1
+    Ugoke follows l1
+    Worker ends l1
+    then l1.exitCode == Zero
+  }
+  scenario AC-LOG-003 "まだ記録のない動いている実行も、--follow で表示し続ける" {
+    User logs l1 with inProject true, hasEvents false, follow true, serverOk true, running true
+    Ugoke shows l1
+    Ugoke follows l1
+    then l1 is Following
+  }
+  scenario AC-LOG-004 "--follow でも、終わった実行は記録した分を表示して終わる" {
+    User logs l1 with inProject true, hasEvents true, follow true, serverOk true, running false
+    Ugoke shows l1
+    Ugoke finishes l1
+    then l1 is Done
+  }
+  scenario AC-LOG-005 "記録がなく動いてもいない実行は、1 で終わる" {
+    User logs l1 with inProject true, hasEvents false, follow false, serverOk false, running false
+    Ugoke fails l1
+    then stage(l1) == Failed and l1.exitCode == One
+  }
+  scenario AC-LOG-006 "--follow でサーバーを準備できなければ、1 で終わる" {
+    User logs l1 with inProject true, hasEvents true, follow true, serverOk false, running false
+    Ugoke fails l1
+    then l1 is Failed
+  }
+
+  forbidden FB-LOG-001 "記録がなく動いてもいない実行を、表示しない" {
+    User logs l1 with inProject true, hasEvents false, follow true, serverOk true, running false
+    Ugoke shows l1
+    then rejected
+  }
+  forbidden FB-LOG-002 "--follow なしで、サーバーがないことを理由に失敗しない" {
+    User logs l1 with inProject true, hasEvents true, follow false, serverOk false, running false
+    Ugoke fails l1
+    then rejected
+  }
+  forbidden FB-LOG-003 "--follow でサーバーを準備できないのに、表示しない" {
+    User logs l1 with inProject true, hasEvents true, follow true, serverOk false, running true
+    Ugoke shows l1
+    then rejected
+  }
+  forbidden FB-LOG-004 "終わった実行を、追いかけない" {
+    User logs l1 with inProject true, hasEvents true, follow true, serverOk true, running false
+    Ugoke shows l1
+    Ugoke follows l1
+    then rejected
+  }
+  forbidden FB-LOG-005 "動いている実行を、--follow で追いかけずに終えない" {
+    User logs l1 with inProject true, hasEvents true, follow true, serverOk true, running true
+    Ugoke shows l1
+    Ugoke finishes l1
+    then rejected
+  }
+  forbidden FB-LOG-006 "プロジェクトの外では、表示しない" {
+    User logs l1 with inProject false, hasEvents true, follow false, serverOk false, running false
+    Ugoke shows l1
+    then rejected
+  }
+}
+verify {
+  instances Log = 1
+}

@@ -1,0 +1,116 @@
+fsl 5
+// Requirements for the state directory of ugoke, which keeps the socket of the resident process,
+// the locks of runs, and their logs: only the user can use it, or a command that uses it fails.
+// The cache directory of the Temporal CLI keeps the same rules (temporal-cli.fsl, REQ-TCL-004).
+// Source: packages/cli/src/private-directory.ts. The docs do not describe the state directory.
+// It is $XDG_STATE_HOME/ugoke, or ~/.local/state/ugoke without XDG_STATE_HOME. The resident
+// process keeps its socket, lock, and log in daemon/ there, and its development server keeps its
+// runs in temporal.db there. The key of the encryption is in encryption.key there
+// (encryption.fsl). The message of the error says what is wrong and how to fix it.
+//
+// MODEL-SDR-001: whether the system has owners and permissions, whether the directory exists, and,
+//                when it does, whether it is a directory, whether the user owns it, whether others
+//                can use it, and whether others can replace an ancestor are given when a command
+//                opens it. An ancestor is safe when the user or root owns it, and others cannot
+//                write to it unless it is sticky, such as /tmp. A directory that does not exist is
+//                created with 700, so it is a private directory of the user. Symbolic links in the
+//                ancestors are followed before the check, so that what is checked is what is used.
+requirements StateDirectory {
+  enum Exit { Pending, Zero, One }
+  actor User, Ugoke
+
+  entity StateDir {
+    posix: Bool = false
+    present: Bool = false
+    isDirectory: Bool = false
+    owned: Bool = false
+    ownOnly: Bool = false
+    ancestorsSafe: Bool = false
+    created: Bool = false
+    exitCode: Exit = Pending
+    lifecycle Unopened -> Opened -> Usable
+    lifecycle Opened -> Refused
+  }
+
+  def safe(e: Bool, d: Bool, o: Bool, p: Bool, a: Bool) = a and (not e or (d and o and p))
+
+  event open = User opens StateDir with posix, present, isDirectory, owned, ownOnly, ancestorsSafe (Unopened -> Opened)
+    covers REQ-SDR-001 "状態のディレクトリは、ソケット、ロック、ログを置くので、自分だけが使えなければならない"
+  event use = Ugoke uses StateDir with created (Opened -> Usable)
+  event refuse = Ugoke refuses StateDir (Opened -> Refused)
+    set exitCode = One
+
+  rule REQ-SDR-002 "シンボリックリンクかディレクトリでないとき、ほかのユーザーのものか、ほかのユーザーが使えるとき、上のディレクトリをほかのユーザーが置き換えられるときは、コマンドは 1 で終わる" {
+    allow Ugoke uses StateDir only when not posix or safe(present, isDirectory, owned, ownOnly, ancestorsSafe)
+    allow Ugoke refuses StateDir only when posix and not safe(present, isDirectory, owned, ownOnly, ancestorsSafe)
+    RefusedExitsOne: always StateDir in Refused has exitCode == One
+    UsableIsSafe: always StateDir in Usable has (not posix or safe(present, isDirectory, owned, ownOnly, ancestorsSafe))
+  }
+  rule REQ-SDR-003 "ないときは、自分だけが使えるディレクトリとして作る" {
+    allow Ugoke uses StateDir only when input created == not present
+    UsableExists: always StateDir in Usable has (present or created)
+  }
+  rule REQ-SDR-004 "所有者と権限のないシステム（Windows）では、確かめない" {
+    never Ugoke refuses StateDir when not posix
+  }
+
+  scenario AC-SDR-001 "自分だけが使えるディレクトリを使う" {
+    User opens s1 with posix true, present true, isDirectory true, owned true, ownOnly true, ancestorsSafe true
+    Ugoke uses s1 with created false
+    then s1 is Usable
+  }
+  scenario AC-SDR-002 "ないときは作って使う" {
+    User opens s1 with posix true, present false, isDirectory false, owned false, ownOnly false, ancestorsSafe true
+    Ugoke uses s1 with created true
+    then s1 is Usable
+  }
+  scenario AC-SDR-003 "ほかのユーザーが使えるディレクトリでは、1 で終わる" {
+    User opens s1 with posix true, present true, isDirectory true, owned true, ownOnly false, ancestorsSafe true
+    Ugoke refuses s1
+    then s1 is Refused
+  }
+  scenario AC-SDR-004 "上のディレクトリをほかのユーザーが置き換えられるときは、作ったあとでも 1 で終わる" {
+    User opens s1 with posix true, present false, isDirectory false, owned false, ownOnly false, ancestorsSafe false
+    Ugoke refuses s1
+    then s1 is Refused
+  }
+  scenario AC-SDR-005 "Windows では確かめずに使う" {
+    User opens s1 with posix false, present true, isDirectory true, owned false, ownOnly false, ancestorsSafe false
+    Ugoke uses s1 with created false
+    then s1 is Usable
+  }
+
+  forbidden FB-SDR-001 "シンボリックリンクを、使わない" {
+    User opens s1 with posix true, present true, isDirectory false, owned true, ownOnly true, ancestorsSafe true
+    Ugoke uses s1 with created false
+    then rejected
+  }
+  forbidden FB-SDR-002 "ほかのユーザーのディレクトリを、使わない" {
+    User opens s1 with posix true, present true, isDirectory true, owned false, ownOnly true, ancestorsSafe true
+    Ugoke uses s1 with created false
+    then rejected
+  }
+  forbidden FB-SDR-003 "上のディレクトリをほかのユーザーが置き換えられるのに、使わない" {
+    User opens s1 with posix true, present true, isDirectory true, owned true, ownOnly true, ancestorsSafe false
+    Ugoke uses s1 with created false
+    then rejected
+  }
+  forbidden FB-SDR-004 "安全なディレクトリを、拒まない" {
+    User opens s1 with posix true, present true, isDirectory true, owned true, ownOnly true, ancestorsSafe true
+    Ugoke refuses s1
+    then rejected
+  }
+  forbidden FB-SDR-005 "あるディレクトリを、作ったことにしない" {
+    User opens s1 with posix true, present true, isDirectory true, owned true, ownOnly true, ancestorsSafe true
+    Ugoke uses s1 with created true
+    then rejected
+  }
+  forbidden FB-SDR-006 "Windows で、拒まない" {
+    User opens s1 with posix false, present true, isDirectory true, owned true, ownOnly false, ancestorsSafe true
+    Ugoke refuses s1
+    then rejected
+  }
+}
+verify {
+  instances StateDir = 1
+}

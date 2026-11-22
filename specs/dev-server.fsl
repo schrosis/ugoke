@@ -1,0 +1,198 @@
+fsl 5
+// Requirements for the Temporal development server of the resident process: when the resident
+// process starts it, how it starts and stops, and how it is kept away from other users and web
+// pages.
+// Source: docs/reference/commands/daemon.md ("ugoke daemon start"). The retry, the way that the
+// server is stopped, its local address, its closed HTTP API and Web UI, and the place and the
+// permissions of its SQLite file are kept here only, and not in the docs.
+//
+// MODEL-DEV-001: whether ugoke daemon start has --address is given when the resident process
+//                starts. The resident process itself, such as its socket and its lock, is
+//                described in daemon-command.fsl, and so is the server that a killed resident
+//                process left.
+// MODEL-DEV-002: the Temporal CLI that starts the server is described in temporal-cli.fsl.
+// MODEL-DEV-003: the time that a stopped server gets to end (5 seconds) is one tick of the clock,
+//                and the time that the resident process waits for the server to start is not
+//                modeled. A server that does not start makes the resident process fail.
+// MODEL-DEV-004: the server keeps its runs in temporal.db in the state directory, so the runs
+//                outlive the server and the resident process.
+requirements DevServer {
+  actor Daemon, Clock
+
+  entity Server {
+    addressOpt: Bool = false
+    process: Bool = false
+    local: Bool = false
+    httpClosed: Bool = false
+    uiUp: Bool = false
+    dbPrivate: Bool = false
+    retried: Bool = false
+    asked: Bool = false
+    graceOver: Bool = false
+    forced: Bool = false
+    lifecycle Unasked -> Asked -> Starting -> Running -> Stopping -> Ended
+    lifecycle Asked -> Connected
+    lifecycle Starting -> Starting
+    lifecycle Starting -> Failed
+    lifecycle Stopping -> Stopping
+  }
+
+  event ask = Daemon asks Server with addressOpt (Unasked -> Asked)
+    covers REQ-DEV-001 "常駐プロセスは、--address がなければ開発サーバーを起動し、--address があればそのサーバーを使う"
+  event connect = Daemon connects Server (Asked -> Connected)
+  event launch = Daemon launches Server with local, httpClosed, uiUp (Asked -> Starting)
+    set process = true
+  event retry = Daemon retries Server (Starting -> Starting)
+    set retried = true
+  event fail = Daemon fails Server (Starting -> Failed)
+    set process = false
+    covers REQ-DEV-006 "サーバーが起動する前に終わったときは、1 度だけ起動し直す"
+  event serve = Daemon serves Server with dbPrivate (Starting -> Running)
+  event stop = Daemon stops Server (Running -> Stopping)
+    set asked = true
+    covers REQ-DEV-007 "サーバーを止めるときは、まず終了を求める。5 秒たっても残っていれば、強制的に止める"
+  event halt = Daemon halts Server (Stopping -> Ended)
+    set process = false
+    covers REQ-DEV-007 "サーバーを止めるときは、まず終了を求める。5 秒たっても残っていれば、強制的に止める"
+  event lapse = Clock lapses Server (Stopping -> Stopping)
+    set graceOver = true
+    covers REQ-DEV-007 "サーバーを止めるときは、まず終了を求める。5 秒たっても残っていれば、強制的に止める"
+  event force = Daemon forces Server (Stopping -> Ended)
+    set process = false, forced = true
+
+  rule REQ-DEV-001 "常駐プロセスは、--address がなければ開発サーバーを起動し、--address があればそのサーバーを使う" {
+    allow Daemon launches Server only when not addressOpt
+    allow Daemon connects Server only when addressOpt
+    ConnectedStartsNothing: always Server in Connected has not process
+    RunningHasProcess: always Server in Running has process
+  }
+  rule REQ-DEV-006 "サーバーが起動する前に終わったときは、1 度だけ起動し直す" {
+    allow Daemon retries Server only when not retried
+  }
+  rule REQ-DEV-007 "サーバーを止めるときは、まず終了を求める。5 秒たっても残っていれば、強制的に止める" {
+    allow Daemon forces Server only when graceOver
+    allow Daemon halts Server only when not graceOver
+    StoppedLeavesNoProcess: always Server in Ended has not process
+    FailedLeavesNoProcess: always Server in Failed has not process
+    ForcedAfterGrace: always Server in Ended has (not graceOver or forced)
+    AskedBeforeForced: always Server in Ended has (not forced or asked)
+  }
+  rule REQ-DEV-008 "Web UI は起動しない。開いた Web ページから、このマシンでコマンドを実行されるおそれがあるため" {
+    allow Daemon launches Server only when not input uiUp
+    NoWebUi: always Server in Running has not uiUp
+  }
+  rule REQ-DEV-009 "サーバーは、このマシンの中からだけつながるアドレスで待ち受ける" {
+    allow Daemon launches Server only when input local
+    LocalOnly: always Server in Running has local
+  }
+  rule REQ-DEV-011 "サーバーの HTTP API は、ブラウザから使えないようにする。ugoke は gRPC だけで話す" {
+    allow Daemon launches Server only when input httpClosed
+    HttpClosed: always Server in Running has httpClosed
+  }
+  rule REQ-DEV-010 "記録の SQLite のファイル（状態のディレクトリの temporal.db）は、自分だけが読み書きできるようにする" {
+    allow Daemon serves Server only when input dbPrivate
+    DbIsPrivate: always Server in Running has dbPrivate
+  }
+
+  scenario AC-DEV-001 "--address がなければ、開発サーバーを起動し、止めるときは終了を求める" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon serves s1 with dbPrivate true
+    Daemon stops s1
+    Daemon halts s1
+    then s1 is Ended
+  }
+  scenario AC-DEV-002 "--address があれば、開発サーバーを起動しない" {
+    Daemon asks s1 with addressOpt true
+    Daemon connects s1
+    then s1 is Connected
+  }
+  scenario AC-DEV-003 "起動する前に終わったサーバーは、1 度だけ起動し直す" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon retries s1
+    Daemon serves s1 with dbPrivate true
+    then s1 is Running
+  }
+  scenario AC-DEV-004 "起動し直しても起動しなければ、失敗する" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon retries s1
+    Daemon fails s1
+    then s1 is Failed
+  }
+  scenario AC-DEV-005 "5 秒たっても残っていれば、強制的に止める" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon serves s1 with dbPrivate true
+    Daemon stops s1
+    Clock lapses s1
+    Daemon forces s1
+    then s1 is Ended
+  }
+
+  forbidden FB-DEV-001 "--address があるのに、開発サーバーを起動しない" {
+    Daemon asks s1 with addressOpt true
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    then rejected
+  }
+  forbidden FB-DEV-002 "--address がないのに、ほかのサーバーにつながない" {
+    Daemon asks s1 with addressOpt false
+    Daemon connects s1
+    then rejected
+  }
+  forbidden FB-DEV-003 "2 度、起動し直さない" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon retries s1
+    Daemon retries s1
+    then rejected
+  }
+  forbidden FB-DEV-004 "5 秒たつ前に、強制的に止めない" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon serves s1 with dbPrivate true
+    Daemon stops s1
+    Daemon forces s1
+    then rejected
+  }
+  forbidden FB-DEV-005 "5 秒たったあとに、強制せずに止まったことにしない" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon serves s1 with dbPrivate true
+    Daemon stops s1
+    Clock lapses s1
+    Daemon halts s1
+    then rejected
+  }
+  forbidden FB-DEV-006 "Web UI を起動しない" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp true
+    then rejected
+  }
+  forbidden FB-DEV-007 "ほかのマシンからつながるアドレスで、待ち受けない" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local false, httpClosed true, uiUp false
+    then rejected
+  }
+  forbidden FB-DEV-008 "ブラウザから使える HTTP API で、サーバーを起動しない" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed false, uiUp false
+    then rejected
+  }
+  forbidden FB-DEV-009 "記録のファイルを、ほかのユーザーに読ませない" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon serves s1 with dbPrivate false
+    then rejected
+  }
+  forbidden FB-DEV-010 "起動していないサーバーを、止めない" {
+    Daemon asks s1 with addressOpt false
+    Daemon launches s1 with local true, httpClosed true, uiUp false
+    Daemon stops s1
+    then rejected
+  }
+}
+verify {
+  instances Server = 1
+}

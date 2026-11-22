@@ -8,16 +8,18 @@
 #   build_args   pnpm arguments that select packages to build, including dependencies
 #   check_args   pnpm arguments that select packages to check
 #   temporal_cli true when the pinned Temporal CLI must be checked against its release
+#   specs        true when the FSL specifications must be checked
 set -euo pipefail
 
 base="${1:-}"
 output="${GITHUB_OUTPUT:-/dev/stdout}"
 
 temporal_cli=false
+specs=false
 
 write() {
-  printf 'scope=%s\nbuild_args=%s\ncheck_args=%s\ntemporal_cli=%s\n' \
-    "$1" "$2" "$3" "$temporal_cli" >> "$output"
+  printf 'scope=%s\nbuild_args=%s\ncheck_args=%s\ntemporal_cli=%s\nspecs=%s\n' \
+    "$1" "$2" "$3" "$temporal_cli" "$specs" >> "$output"
 }
 
 # Selective runs rely on these scripts, so a package without one would be
@@ -40,6 +42,7 @@ fi
 
 if [ -z "$base" ]; then
   temporal_cli=true
+  specs=true
   write all "-r" "-r"
   exit 0
 fi
@@ -52,6 +55,14 @@ while IFS= read -r file; do
   # The check downloads from GitHub, so run it only when the pinned release can change.
   if [[ $file == packages/cli/src/temporal-cli/manifest.ts || $file == scripts/update-temporal-cli.ts ]]; then
     temporal_cli=true
+  fi
+  # The specifications are checked with the fslc that mise pins.
+  if [[ $file == specs/* || $file == .github/scripts/check-specs.sh || $file == mise.toml || $file == mise.lock ]]; then
+    specs=true
+  fi
+  # Specifications and documentation do not require package checks.
+  if [[ $file == specs/* ]]; then
+    continue
   fi
   if [[ $file =~ $docs_pattern ]]; then
     continue

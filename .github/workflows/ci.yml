@@ -39,6 +39,16 @@ jobs:
         run: .github/scripts/affected-packages.sh "$BASE_REF"
       - name: Format
         run: pnpm format:check
+      - name: Restore the fslc cache
+        if: steps.affected.outputs.specs == 'true'
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/fslc
+          key: fslc-${{ runner.os }}-${{ hashFiles('mise.lock', 'specs/**') }}
+          restore-keys: fslc-${{ runner.os }}-
+      - name: Check the specifications
+        if: steps.affected.outputs.specs == 'true'
+        run: .github/scripts/check-specs.sh
       - name: Check the pinned Temporal CLI
         if: steps.affected.outputs.temporal_cli == 'true'
         run: node scripts/update-temporal-cli.ts --check

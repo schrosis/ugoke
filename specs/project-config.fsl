@@ -1,0 +1,108 @@
+fsl 5
+// Requirements for the configuration file of a project, .ugoke/config.yaml: where it is, how it is
+// read, and what a problem in it does.
+// Source: docs/reference/config.md
+//
+// MODEL-CFG-001: one reading of the file is modeled. Whether config.yaml and config.yml exist,
+//                whether the file is empty, and whether it has a problem are given when a command
+//                reads it. A problem is YAML that cannot be parsed, an anchor or an alias, a key
+//                written twice, more than one document, an unknown field, an empty
+//                temporal.address, or a file that cannot be read. The messages say where the
+//                problem is, as for a workflow definition. The fields are temporal.address and
+//                plugins, whose keys must be names of npm packages. The settings under them are
+//                checked when the plugins load (plugins.fsl).
+// MODEL-CFG-002: the commands that handle workflows read the file each time they run, such as
+//                ugoke validate, ugoke run, ugoke attach, ugoke cancel, ugoke docs, and ugoke inbox
+//                list, and so does the resident process each time a project asks it, so a change
+//                needs no restart. ugoke daemon status does not read it. A command ends with 1 on
+//                a problem, even with --address.
+// MODEL-CFG-003: temporal.address names the Temporal Server of the project, which run-command.fsl
+//                (REQ-CMD-010) and daemon-projects.fsl use.
+// MODEL-CFG-004: $schema at the top of the file names a JSON Schema for editors. It is accepted
+//                and changes nothing (schema-command.fsl).
+// MODEL-CFG-005: output.showCommands of the file tells whether the progress quotes the run of a
+//                script step and the prompt of an AI step (progress-display.fsl).
+requirements ProjectConfig {
+  enum Exit { Pending, Zero, One }
+  actor User, Ugoke
+
+  entity Reading {
+    yaml: Bool = false
+    yml: Bool = false
+    empty: Bool = false
+    problem: Bool = false
+    hasSettings: Bool = false
+    exitCode: Exit = Pending
+    lifecycle Unread -> Opened -> Read
+    lifecycle Opened -> Failed
+  }
+
+  event open = User reads Reading with yaml, yml, empty, problem (Unread -> Opened)
+    covers REQ-CFG-001 "プロジェクトの設定は、.ugoke/config.yaml か .ugoke/config.yml に書く"
+  event accept = Ugoke accepts Reading with hasSettings (Opened -> Read)
+  event fail = Ugoke rejects Reading (Opened -> Failed)
+    set exitCode = One
+
+  rule REQ-CFG-002 "ファイルがないときと、空のファイルは、設定がない" {
+    allow User reads Reading only when input yaml or input yml or (not input empty and not input problem)
+    allow Ugoke accepts Reading only when input hasSettings == ((yaml or yml) and not empty)
+  }
+  rule REQ-CFG-003 "config.yaml と config.yml の両方があると、エラーになる" {
+    allow Ugoke accepts Reading only when not (yaml and yml)
+  }
+  rule REQ-CFG-004 "ファイルに問題があると、コマンドはエラーを表示して 1 で終わる。書き方の制限は、ワークフローの定義と同じ" {
+    allow Ugoke accepts Reading only when not problem
+    allow Ugoke rejects Reading only when (yaml and yml) or ((yaml or yml) and problem)
+    FailedExitsOne: always Reading in Failed has exitCode == One
+  }
+
+  scenario AC-CFG-001 "ファイルがなければ、設定なしで続ける" {
+    User reads r1 with yaml false, yml false, empty false, problem false
+    Ugoke accepts r1 with hasSettings false
+    then r1 is Read
+  }
+  scenario AC-CFG-002 "空のファイルは、設定なし" {
+    User reads r1 with yaml true, yml false, empty true, problem false
+    Ugoke accepts r1 with hasSettings false
+    then r1 is Read
+  }
+  scenario AC-CFG-003 "config.yml も読む" {
+    User reads r1 with yaml false, yml true, empty false, problem false
+    Ugoke accepts r1 with hasSettings true
+    then r1 is Read
+  }
+  scenario AC-CFG-004 "問題があれば、1 で終わる" {
+    User reads r1 with yaml true, yml false, empty false, problem true
+    Ugoke rejects r1
+    then stage(r1) == Failed and r1.exitCode == One
+  }
+  scenario AC-CFG-005 "両方あれば、1 で終わる" {
+    User reads r1 with yaml true, yml true, empty false, problem false
+    Ugoke rejects r1
+    then r1 is Failed
+  }
+
+  forbidden FB-CFG-001 "両方あるのに、読まない" {
+    User reads r1 with yaml true, yml true, empty false, problem false
+    Ugoke accepts r1 with hasSettings true
+    then rejected
+  }
+  forbidden FB-CFG-002 "問題のあるファイルを、受け付けない" {
+    User reads r1 with yaml true, yml false, empty false, problem true
+    Ugoke accepts r1 with hasSettings true
+    then rejected
+  }
+  forbidden FB-CFG-003 "ファイルがないのを、エラーにしない" {
+    User reads r1 with yaml false, yml false, empty false, problem false
+    Ugoke rejects r1
+    then rejected
+  }
+  forbidden FB-CFG-004 "空のファイルに、設定を見つけない" {
+    User reads r1 with yaml true, yml false, empty true, problem false
+    Ugoke accepts r1 with hasSettings true
+    then rejected
+  }
+}
+verify {
+  instances Reading = 1
+}

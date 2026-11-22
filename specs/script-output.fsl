@@ -1,0 +1,62 @@
+fsl 5
+// Requirements for showing the output of a script step while it runs.
+// Source: the output of ugoke run (packages/cli/src/progress.ts)
+//
+// MODEL-OUT-001: each piece of output is shown as it arrives, so one piece stands for what the
+//                script wrote at one time.
+// MODEL-OUT-002: what the AI of an AI step says and does is output of the step on standard
+//                output, so it is shown in the same way as output of a script.
+requirements ScriptOutput {
+  enum Stream { NoStream, Stdout, Stderr }
+  actor Ugoke
+
+  entity StepRun {
+    written: Stream = NoStream
+    shown: Stream = NoStream
+    endAtLineStart: Bool = false
+    lifecycle Pending -> Running -> Ended
+    lifecycle Running -> Running
+  }
+
+  event start = Ugoke starts StepRun (Pending -> Running)
+    covers REQ-PRG-001 "ステップを始めると、ステップの ID を表示する"
+  event print = Ugoke prints StepRun with written (Running -> Running)
+    set shown = input written
+    covers REQ-OUT-001 "コマンドの出力は、コマンドが書いたのと同じ所（標準出力か標準エラー）に表示する"
+  event finish = Ugoke ends StepRun (Running -> Ended)
+    set endAtLineStart = true
+    covers REQ-OUT-002 "改行で終わらない出力のあとも、ステップの結果の行は新しい行から始める"
+
+  rule REQ-OUT-001 "コマンドの出力は、コマンドが書いたのと同じ所（標準出力か標準エラー）に表示する" {
+    SameStream: always StepRun in Running has shown == written
+  }
+  rule REQ-OUT-002 "改行で終わらない出力のあとも、ステップの結果の行は新しい行から始める" {
+    EndStartsLine: always StepRun in Ended has endAtLineStart
+  }
+
+  scenario AC-OUT-001 "標準エラーに書いた出力を、標準エラーに表示する" {
+    Ugoke starts s1
+    Ugoke prints s1 with written Stderr
+    Ugoke ends s1
+    then s1 is Ended
+  }
+
+  forbidden FB-OUT-001 "結果の行のあとに、ステップの出力を表示しない" {
+    Ugoke starts s1
+    Ugoke ends s1
+    Ugoke prints s1 with written Stdout
+    then rejected
+  }
+  forbidden FB-OUT-002 "始めたステップを、もう一度始めない" {
+    Ugoke starts s1
+    Ugoke starts s1
+    then rejected
+  }
+  forbidden FB-OUT-003 "始めていないステップを、終えない" {
+    Ugoke ends s1
+    then rejected
+  }
+}
+verify {
+  instances StepRun = 1
+}

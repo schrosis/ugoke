@@ -1,0 +1,54 @@
+fsl 5
+// refine: validate-expressions.fsl step-references.fsl
+//
+// The reference check keeps the requirements of the references: it accepts a reference exactly
+// when the place may use it, the step runs before, the value is declared, and no field of a value
+// is read.
+refinement ValidateExpressionsRefinesStepReferences {
+  impl ValidateExpressions
+  abs StepReferences
+
+  map reference_stage[r: Reference] =
+    if phase[r] == Unchecked then Unwritten
+    else if phase[r] == RefsPassed then Accepted
+    else if phase[r] == RefsFailed then Rejected
+    else Written
+  map reference_place[r: Reference] =
+    if site[r] == AtInputs then InInputs else if site[r] == AtRun then InRun
+    else if site[r] == AtPrompt then InPrompt else if site[r] == AtWith then InWith
+    else if site[r] == AtIf then InIf else if site[r] == AtStepEnv then InStepEnv
+    else if site[r] == AtWorkflowEnv then InWorkflowEnv else InOutputs
+  map reference_kind[r: Reference] =
+    if kind[r] == OfScript then ScriptKind else if kind[r] == OfWait then WaitKind
+    else if kind[r] == OfAi then AiKind else NoStepKind
+  map reference_root[r: Reference] =
+    if target[r] == ToStep then StepOutput
+    else if target[r] == ToWorkflow then WorkflowValue
+    else if target[r] == ToOwn then OwnInput
+    else if target[r] == ToOwnOutput then OwnOutput
+    else if target[r] == ToEnv then EnvVar
+    else if target[r] == ToResult then ScriptResult
+    else if target[r] == ToAnswer then Answer
+    else if target[r] == ToData then AiData
+    else if target[r] == ToOutcome then Outcome
+    else Unknown
+  map reference_declared[r: Reference] = declared[r]
+  map reference_earlier[r: Reference] = earlier[r]
+  map reference_nested[r: Reference] = nested[r]
+
+  action read(r, s, k, t, d, e, n) -> write(
+    r,
+    if s == AtInputs then InInputs else if s == AtRun then InRun else if s == AtPrompt then InPrompt else if s == AtWith then InWith else if s == AtIf then InIf else if s == AtStepEnv then InStepEnv else if s == AtWorkflowEnv then InWorkflowEnv else InOutputs,
+    if k == OfScript then ScriptKind else if k == OfWait then WaitKind else if k == OfAi then AiKind else NoStepKind,
+    if t == ToStep then StepOutput else if t == ToWorkflow then WorkflowValue else if t == ToOwn then OwnInput else if t == ToOwnOutput then OwnOutput else if t == ToEnv then EnvVar else if t == ToResult then ScriptResult else if t == ToAnswer then Answer else if t == ToData then AiData else if t == ToOutcome then Outcome else Unknown,
+    d, e, n)
+  action rootFails(r) -> reject(r)
+  action rootPasses(r) -> stutter
+  action orderFails(r) -> reject(r)
+  action orderPasses(r) -> stutter
+  action declarationFails(r) -> reject(r)
+  action declarationPasses(r) -> stutter
+  action shapeFails(r) -> reject(r)
+  action shapePasses(r) -> accept(r)
+  action rest(r) -> stutter
+}
