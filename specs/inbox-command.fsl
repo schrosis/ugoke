@@ -1,0 +1,166 @@
+fsl 5
+// Requirements for ugoke inbox: listing the wait steps of the project that wait for someone to
+// answer, and answering one of them for a run that the resident process runs.
+// Source: docs/reference/commands/inbox.md, docs/guide/run.md ("あとで答える")
+//
+// MODEL-INB-001: one run of the project is modeled when ugoke inbox list reads it. Whether it waits
+//                at a wait step, whether that step is answered in the Worker (worker-wait.fsl),
+//                and whether a Worker serves the run, which a query needs, are given when it is
+//                read. A query gives up after five seconds. The list shows each question with the
+//                ID of the run, the name of the workflow, the step and its visit, the time since
+//                the run started, the input of the workflow, the message quoted with "│ ", the
+//                declared answers, and the command that answers it: ugoke inbox answer for a run
+//                that the resident process runs, and ugoke attach otherwise. A run that cannot be
+//                read is reported on standard error with the command that attaches to it. With
+//                --address, the resident process runs no run for the command, as for ugoke run
+//                (run-command.fsl, MODEL-CMD-001), so every question shows ugoke attach. The
+//                questions of the most recent runs come first. One run that cannot be read ends the
+//                command with 1, even when it shows other questions or none.
+// MODEL-INB-002: one answer of ugoke inbox answer is modeled. Whether the run is a running run of
+//                the project, whether the resident process runs it (never with --address, as in
+//                MODEL-INB-001), whether --values could be read, whether the values fit the
+//                declared answers, and whether the step waits at the visit are given when it is
+//                typed. --values is a JSON object or the path of a .json
+//                file, as --input is (input-option.fsl). Without --visit, the step that waits now
+//                is answered. The run checks the answer, so a rejected answer leaves the step
+//                waiting. --detach is required, and the command exits after the answer.
+// MODEL-INB-003: a process that follows the run and asks the step in its terminal, such as ugoke
+//                run or ugoke attach, checks every second whether the step still waits. When
+//                another process answered it, it stops asking, shows "Answered elsewhere" in the
+//                output of the step, and follows the run on. The end of the step usually tells it
+//                first. A step that ends because it was cancelled is not answered.
+requirements InboxCommand {
+  enum Exit { Pending, Zero, One }
+  actor User, Ugoke
+
+  entity ListedRun {
+    waits: Bool = false
+    workerAnswers: Bool = false
+    readable: Bool = false
+    lifecycle Unread -> Found -> Listed
+    lifecycle Found -> Skipped
+    lifecycle Found -> Unreadable
+  }
+
+  entity Answer {
+    runKnown: Bool = false
+    inDaemon: Bool = false
+    valuesRead: Bool = false
+    fits: Bool = false
+    stillWaits: Bool = false
+    exitCode: Exit = Pending
+    lifecycle Untyped -> Typed -> Sent -> Accepted
+    lifecycle Typed -> Refused
+    lifecycle Sent -> Rejected
+  }
+
+  event find = Ugoke finds ListedRun with waits, workerAnswers, readable (Unread -> Found)
+    covers REQ-INB-001 "ugoke inbox list は、プロジェクトの実行で、誰かの答えを待っている wait ステップを、答えるコマンドと一緒に一覧にする"
+  event list = Ugoke lists ListedRun (Found -> Listed)
+  event skip = Ugoke skips ListedRun (Found -> Skipped)
+  event report = Ugoke reports ListedRun (Found -> Unreadable)
+  event type = User types Answer with runKnown, inDaemon, valuesRead, fits, stillWaits (Untyped -> Typed)
+    covers REQ-INB-004 "ugoke inbox answer は、常駐プロセスが動かしている実行の wait ステップに答えて終わる。実行は常駐プロセスで続く"
+  event send = Ugoke sends Answer (Typed -> Sent)
+  event accept = Ugoke accepts Answer (Sent -> Accepted)
+    set exitCode = Zero
+  event reject = Ugoke rejects Answer (Sent -> Rejected)
+    set exitCode = One
+  event refuse = Ugoke refuses Answer (Typed -> Refused)
+    set exitCode = One
+
+  rule REQ-INB-002 "Worker が答える待ち方のステップと、待っていない実行は、出さない" {
+    allow Ugoke lists ListedRun only when readable and waits and not workerAnswers
+    allow Ugoke skips ListedRun only when readable and (not waits or workerAnswers)
+  }
+  rule REQ-INB-003 "ステップを動かす Worker のいない実行は、何を待っているかを読めない。そのことと ugoke attach を案内し、1 で終わる" {
+    allow Ugoke reports ListedRun only when not readable
+  }
+  rule REQ-INB-005 "常駐プロセスが動かしていない実行、ない実行、読めない --values には、答えを送らずに 1 で終わる" {
+    allow Ugoke sends Answer only when runKnown and inDaemon and valuesRead
+    allow Ugoke refuses Answer only when not (runKnown and inDaemon and valuesRead)
+    RefusedExitsOne: always Answer in Refused has exitCode == One
+  }
+  rule REQ-INB-006 "宣言に合わない答えと、もう待っていないステップや回への答えは、実行が受け付けず、1 で終わる。ステップはそのまま待つ" {
+    allow Ugoke accepts Answer only when fits and stillWaits
+    allow Ugoke rejects Answer only when not (fits and stillWaits)
+    AcceptedExitsZero: always Answer in Accepted has exitCode == Zero
+    RejectedExitsOne: always Answer in Rejected has exitCode == One
+  }
+
+  scenario AC-INB-001 "答えを待っているステップを出す" {
+    Ugoke finds r1 with waits true, workerAnswers false, readable true
+    Ugoke lists r1
+    then r1 is Listed
+  }
+  scenario AC-INB-002 "Worker が答えるステップは出さない" {
+    Ugoke finds r1 with waits true, workerAnswers true, readable true
+    Ugoke skips r1
+    then r1 is Skipped
+  }
+  scenario AC-INB-003 "Worker のいない実行は、読めないことを知らせる" {
+    Ugoke finds r1 with waits true, workerAnswers false, readable false
+    Ugoke reports r1
+    then r1 is Unreadable
+  }
+  scenario AC-INB-004 "常駐プロセスの実行に答える" {
+    User types a1 with runKnown true, inDaemon true, valuesRead true, fits true, stillWaits true
+    Ugoke sends a1
+    Ugoke accepts a1
+    then stage(a1) == Accepted and a1.exitCode == Zero
+  }
+  scenario AC-INB-005 "常駐プロセスが動かしていない実行には、答えない" {
+    User types a1 with runKnown true, inDaemon false, valuesRead true, fits true, stillWaits true
+    Ugoke refuses a1
+    then stage(a1) == Refused and a1.exitCode == One
+  }
+  scenario AC-INB-006 "宣言に合わない答えは、実行が受け付けない" {
+    User types a1 with runKnown true, inDaemon true, valuesRead true, fits false, stillWaits true
+    Ugoke sends a1
+    Ugoke rejects a1
+    then stage(a1) == Rejected and a1.exitCode == One
+  }
+  scenario AC-INB-007 "もう待っていない回への答えは、受け付けない" {
+    User types a1 with runKnown true, inDaemon true, valuesRead true, fits true, stillWaits false
+    Ugoke sends a1
+    Ugoke rejects a1
+    then a1 is Rejected
+  }
+
+  forbidden FB-INB-001 "Worker が答えるステップを、出さない" {
+    Ugoke finds r1 with waits true, workerAnswers true, readable true
+    Ugoke lists r1
+    then rejected
+  }
+  forbidden FB-INB-002 "常駐プロセスが動かしていない実行に、答えを送らない" {
+    User types a1 with runKnown true, inDaemon false, valuesRead true, fits true, stillWaits true
+    Ugoke sends a1
+    then rejected
+  }
+  forbidden FB-INB-003 "宣言に合わない答えを、受け付けない" {
+    User types a1 with runKnown true, inDaemon true, valuesRead true, fits false, stillWaits true
+    Ugoke sends a1
+    Ugoke accepts a1
+    then rejected
+  }
+  forbidden FB-INB-004 "答えられる実行を、断らない" {
+    User types a1 with runKnown true, inDaemon true, valuesRead true, fits true, stillWaits true
+    Ugoke refuses a1
+    then rejected
+  }
+  forbidden FB-INB-005 "読める実行を、読めないことにしない" {
+    Ugoke finds r1 with waits true, workerAnswers false, readable true
+    Ugoke reports r1
+    then rejected
+  }
+  forbidden FB-INB-006 "もう待っていない回への答えを、受け付けない" {
+    User types a1 with runKnown true, inDaemon true, valuesRead true, fits true, stillWaits false
+    Ugoke sends a1
+    Ugoke accepts a1
+    then rejected
+  }
+}
+verify {
+  instances ListedRun = 1
+  instances Answer = 1
+}

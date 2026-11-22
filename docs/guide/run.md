@@ -73,7 +73,7 @@ Waiting for the running step to finish, so that you can attach to the run later.
 Press Ctrl+C again to exit now. The running step will fail, and the run cannot be continued.
 ```
 
-## 実行に戻る、取り消す
+## 実行に戻る
 
 切り離した実行には、`ugoke attach` で戻れます。実行の ID を書かなければ、プロジェクトの実行を一覧にして、選んでもらいます。
 
@@ -84,6 +84,30 @@ Select a run (1-1): 1
 ```
 
 戻ると、`ugoke run` と同じように、終わるまで追いかけます。待機ステップが答えを待っていれば、ここで答えられます。1 つの実行を追いかけられるのは、1 つのプロセスだけです。
+
+## あとで答える
+
+常駐プロセスが動かしている実行なら、戻らずに答えることもできます。`ugoke inbox list` で、答えを待っているステップと、答えるコマンドを一覧にします。
+
+```console
+$ ugoke inbox list
+deploy-8f2c…  deploy  approve (visit 0)  started 5m ago
+  │ Deploy to production?
+  answers:
+    decision: one of approve, reject (required)
+  ugoke inbox answer deploy-8f2c… --step approve --visit 0 --values '{...}' --detach
+```
+
+出たコマンドの `{...}` を答えに変えて、実行します。
+
+```console
+$ ugoke inbox answer deploy-8f2c… --step approve --visit 0 --values '{"decision":"approve"}' --detach
+deploy: answered approve. The run goes on in ugoke daemon
+```
+
+オプションは、リファレンスの「[ugoke inbox](../reference/commands/inbox.md)」にあります。
+
+## 取り消す
 
 実行を止めるときは、`ugoke cancel` で取り消します。待機ステップの待ちと、実行中のスクリプトや AI を止めます。
 
