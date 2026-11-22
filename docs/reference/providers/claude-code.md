@@ -41,6 +41,7 @@ review:
 
 - Claude Code は、プロジェクトのルートで動きます。Claude Code の設定ファイル（`~/.claude/settings.json`、プロジェクトの `.claude/settings.json` と `.claude/settings.local.json`）と `CLAUDE.md` を読みます
 - 許可が要るツールは、`allowedTools` か Claude Code の設定で許していなければ、使おうとしても断ります。ステップのあいだは誰も答えられないため、許すかどうかを聞きません
+- `allowedTools` の `Read` と `Edit` のパスは、プロジェクトのルートから数えます。AI がディレクトリを移っても変わりません。`*.md` のように `/` のない名前は、プロジェクトの下のどこにあっても当てはまります
 - `.ugoke` の中のファイルは、ファイルを編集するツールでは編集させません。動いているワークフローの定義が変わらないようにするためです。`allowedTools` で `Bash` を許すと、コマンドでは変えられます
 - `model` を書けば、そのモデルを使います。書かなければ、Claude Code が選びます
 - `agent` を書けば、そのエージェントがステップを動かします。エージェントは、Claude Code と同じ場所から読みます。たとえば、`~/.claude/agents/` やプロジェクトの `.claude/agents/` です。例の `reviewer` は、`.claude/agents/reviewer.md` にあるものとしています

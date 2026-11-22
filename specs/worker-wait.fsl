@@ -10,15 +10,22 @@ fsl 5
 //                follows the run, whether it fits the declared answers, and whether it is over
 //                512 KiB are given when it comes. ugoke run and ugoke attach only wait for such a
 //                step, and do not ask.
-// MODEL-WWT-002: the Worker runs the method in an activity without a timeout, which beats every
-//                few seconds. A Worker that stops, such as when the resident process stops, stops
-//                the method and fails the attempt as retryable, and the next Worker asks again. A
+// MODEL-WWT-002: the Worker runs the method in an activity without a timeout, which beats every few
+//                seconds. A Worker that stops, such as when the resident process stops, stops the
+//                method and fails the attempt as retryable, and the next Worker asks again. A
 //                Worker that dies misses the heartbeats, which also leads to another attempt. A
 //                Worker without the method, a with that the method refuses, and a method that
 //                throws fail the step without a retry. The method receives the run, the step, and
-//                the visit, so that it can tell runs apart. The Worker that ugoke run starts for
-//                itself answers too, with the plugins of the project, and stops the method when the
-//                command detaches, so that ugoke attach or the resident process asks again.
+//                the visit, so that it can tell runs apart, and when the visit of the step started
+//                to wait, in workflow time, which every attempt receives alike, so that it can tell
+//                what happened while the step waited. A run that started before the time was given,
+//                and a time that is not a date, fall back to when the activity was first scheduled.
+//                The method can write lines to the log of the Worker: the resident process writes
+//                them with the project and the step, and the Worker of ugoke run writes nothing, to
+//                keep the progress intact. A line that cannot be written does not change the wait.
+//                The Worker that ugoke run starts for itself answers too, with the plugins of the
+//                project, and stops the method when the command detaches, so that ugoke attach or
+//                the resident process asks again.
 // MODEL-WWT-003: a cancelled wait ends after its method stopped asking, so that no one answers a
 //                closed step.
 // MODEL-WWT-004: ugoke before this way of answering refuses an intermediate form that has

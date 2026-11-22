@@ -14,6 +14,10 @@ fsl 5
 //                line, is in terminal-prompt.fsl.
 // MODEL-WAI-005: a method that answers in the Worker, which no follower asks, is in
 //                worker-wait.fsl.
+// MODEL-WAI-006: a method that a follower runs, such as terminal, also receives when the step
+//                started to wait (worker-wait.fsl). A run that does not report it, or reports a
+//                time that is not a date, falls back to when the follower first asks, which stays
+//                the same while it asks again.
 requirements WaitStep {
   enum Source { NoSource, Given, Default, Null }
   actor Author, Worker, User
