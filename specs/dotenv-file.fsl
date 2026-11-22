@@ -16,11 +16,20 @@ fsl 5
 //                blanks around it, and may be empty, such as in A= or A= # count, and a # after a
 //                blank starts a comment; a # without a blank before it is an error, so that a value
 //                with # is quoted. A value in single quotes is as written. In double quotes, \n is
-//                a line break, and any other backslash is an error; the character after it is still
-//                skipped, so that "a\"b" does not end early. After the closing quote, only blanks
-//                and a comment may follow, and the comment needs no blank before it, such as in
-//                "x"# note. A quote that is never closed stops the reading, and the lines after it
-//                are not read. Variables such as $HOME are not expanded.
+//                a line break, \$ is a $, and any other backslash is an error; the character after
+//                it is still skipped, so that "a\"b" does not end early. After the closing quote,
+//                only blanks and a comment may follow, and the comment needs no blank before it,
+//                such as in "x"# note. A quote that is never closed stops the reading, and the
+//                lines after it are not read. variablesOk tells whether every variable of an
+//                unquoted value or a value in double quotes, written as $NAME or ${NAME} with a
+//                name of env, is well formed and set. A variable takes its value from the
+//                environment that the step inherits, and then from the earlier lines, which is the
+//                order in which the step sees them (script-env.fsl), so that a variable that the
+//                environment overrides gives the value that the step sees; a later line does not
+//                give it. A $ that neither a name nor { follows, such as in $5, is a $, and ${
+//                without a name and a closing } is malformed. A value that a variable gives is not
+//                expanded again, and a name that objects only inherit, such as constructor, is not
+//                read from the environment.
 // MODEL-DOT-003: one file is modeled when a step reads it. Every malformed line is found, and the
 //                step fails with the first ten, each with its line number, and the count of the
 //                rest. The reasons never contain the name or the value, because a value may be a
@@ -39,6 +48,7 @@ requirements DotenvFile {
     badEscape: Bool = false
     closed: Bool = false
     restOk: Bool = false
+    variablesOk: Bool = false
     lifecycle Unread -> Scanned -> Kept
     lifecycle Scanned -> Skipped
     lifecycle Scanned -> Bad
@@ -50,15 +60,15 @@ requirements DotenvFile {
     lifecycle Opened -> Refused
   }
 
-  def valueOk(f: Form, h: Bool, e: Bool, c: Bool, r: Bool) =
-    if f == Unquoted then not h
+  def valueOk(f: Form, h: Bool, e: Bool, c: Bool, r: Bool, v: Bool) =
+    if f == Unquoted then not h and v
     else if f == SingleQuoted then c and r
-    else if f == DoubleQuoted then c and r and not e
+    else if f == DoubleQuoted then c and r and not e and v
     else false
-  def lineOk(k: Kind, n: Bool, rep: Bool, f: Form, h: Bool, e: Bool, c: Bool, r: Bool) =
-    k == Assignment and n and not rep and valueOk(f, h, e, c, r)
+  def lineOk(k: Kind, n: Bool, rep: Bool, f: Form, h: Bool, e: Bool, c: Bool, r: Bool, v: Bool) =
+    k == Assignment and n and not rep and valueOk(f, h, e, c, r, v)
 
-  event scan = Worker scans Line with kind, nameOk, repeated, form, hashGlued, badEscape, closed, restOk (Unread -> Scanned)
+  event scan = Worker scans Line with kind, nameOk, repeated, form, hashGlued, badEscape, closed, restOk, variablesOk (Unread -> Scanned)
     covers REQ-DOT-001 "dotenv のファイルは、1 行に 1 つ、空の行、# のコメント、名前=値 を書く。名前の前に export を付けてもよい"
   event keep = Worker keeps Line (Scanned -> Kept)
   event skip = Worker skips Line (Scanned -> Skipped)
@@ -69,11 +79,14 @@ requirements DotenvFile {
   event refuse = Worker refuses File (Opened -> Refused)
 
   rule REQ-DOT-002 "名前は env と同じ決まりで書き、同じ名前を 2 度は書けない" {
-    allow Worker keeps Line only when lineOk(kind, nameOk, repeated, form, hashGlued, badEscape, closed, restOk)
+    allow Worker keeps Line only when lineOk(kind, nameOk, repeated, form, hashGlued, badEscape, closed, restOk, variablesOk)
   }
   rule REQ-DOT-003 "値は、引用符なし、一重の引用符で囲む、二重の引用符で囲むのどれかで書く。引用符なしでは、空白のあとの # からがコメント。二重の引用符の中では、バックスラッシュは改行の n の前だけに書ける。閉じた引用符のあとは、空白とコメントだけ。バッククォートで囲んだ値は書けない" {
-    allow Worker marks Line only when kind != BlankLine and kind != CommentLine and not lineOk(kind, nameOk, repeated, form, hashGlued, badEscape, closed, restOk)
+    allow Worker marks Line only when kind != BlankLine and kind != CommentLine and not lineOk(kind, nameOk, repeated, form, hashGlued, badEscape, closed, restOk, variablesOk)
     allow Worker skips Line only when kind == BlankLine or kind == CommentLine
+  }
+  rule REQ-DOT-005 "引用符なしの値と二重の引用符の中の $NAME と ${NAME} は、引き継いだ環境変数から、なければ前の行から展開する。どちらにもない変数と、形の正しくない変数は、決まりに合わない。一重の引用符の中は展開しない" {
+    allow Worker keeps Line only when form == SingleQuoted or variablesOk
   }
   rule REQ-DOT-004 "1 行でも決まりに合わない行があれば、ファイルのどの値も渡さず、ステップは失敗する" {
     allow Worker gives File only when not anyBad
@@ -81,22 +94,22 @@ requirements DotenvFile {
   }
 
   scenario AC-DOT-001 "引用符なしの値を読む" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false, variablesOk true
     Worker keeps l1
     then l1 is Kept
   }
   scenario AC-DOT-002 "一重の引用符で囲んだ値を読む" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated false, form SingleQuoted, hashGlued false, badEscape false, closed true, restOk true
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form SingleQuoted, hashGlued false, badEscape false, closed true, restOk true, variablesOk true
     Worker keeps l1
     then l1 is Kept
   }
   scenario AC-DOT-003 "コメントの行は、飛ばす" {
-    Worker scans l1 with kind CommentLine, nameOk false, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false
+    Worker scans l1 with kind CommentLine, nameOk false, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false, variablesOk true
     Worker skips l1
     then l1 is Skipped
   }
   scenario AC-DOT-004 "空白のない # は、決まりに合わない" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Unquoted, hashGlued true, badEscape false, closed false, restOk false
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Unquoted, hashGlued true, badEscape false, closed false, restOk false, variablesOk true
     Worker marks l1
     then l1 is Bad
   }
@@ -112,32 +125,32 @@ requirements DotenvFile {
   }
 
   forbidden FB-DOT-001 "同じ名前を、2 度読まない" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated true, form Unquoted, hashGlued false, badEscape false, closed false, restOk false
+    Worker scans l1 with kind Assignment, nameOk true, repeated true, form Unquoted, hashGlued false, badEscape false, closed false, restOk false, variablesOk true
     Worker keeps l1
     then rejected
   }
   forbidden FB-DOT-002 "二重の引用符の中の、改行でないバックスラッシュを、受け付けない" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated false, form DoubleQuoted, hashGlued false, badEscape true, closed true, restOk true
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form DoubleQuoted, hashGlued false, badEscape true, closed true, restOk true, variablesOk true
     Worker keeps l1
     then rejected
   }
   forbidden FB-DOT-003 "閉じない引用符を、受け付けない" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated false, form SingleQuoted, hashGlued false, badEscape false, closed false, restOk true
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form SingleQuoted, hashGlued false, badEscape false, closed false, restOk true, variablesOk true
     Worker keeps l1
     then rejected
   }
   forbidden FB-DOT-004 "閉じた引用符のあとの文字を、受け付けない" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated false, form DoubleQuoted, hashGlued false, badEscape false, closed true, restOk false
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form DoubleQuoted, hashGlued false, badEscape false, closed true, restOk false, variablesOk true
     Worker keeps l1
     then rejected
   }
   forbidden FB-DOT-005 "バッククォートで囲んだ値を、受け付けない" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Backquoted, hashGlued false, badEscape false, closed true, restOk true
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Backquoted, hashGlued false, badEscape false, closed true, restOk true, variablesOk true
     Worker keeps l1
     then rejected
   }
   forbidden FB-DOT-006 "= のない行を、受け付けない" {
-    Worker scans l1 with kind OtherLine, nameOk true, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false
+    Worker scans l1 with kind OtherLine, nameOk true, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false, variablesOk true
     Worker keeps l1
     then rejected
   }
@@ -147,8 +160,28 @@ requirements DotenvFile {
     then rejected
   }
   forbidden FB-DOT-008 "決まりに合う行を、決まりに合わないとしない" {
-    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false, variablesOk true
     Worker marks l1
+    then rejected
+  }
+  scenario AC-DOT-007 "引き継いだ環境変数か前の行にある変数を、展開する" {
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form DoubleQuoted, hashGlued false, badEscape false, closed true, restOk true, variablesOk true
+    Worker keeps l1
+    then l1 is Kept
+  }
+  scenario AC-DOT-008 "一重の引用符の中は、展開しない" {
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form SingleQuoted, hashGlued false, badEscape false, closed true, restOk true, variablesOk false
+    Worker keeps l1
+    then l1 is Kept
+  }
+  forbidden FB-DOT-009 "どこにもない変数を、受け付けない" {
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form Unquoted, hashGlued false, badEscape false, closed false, restOk false, variablesOk false
+    Worker keeps l1
+    then rejected
+  }
+  forbidden FB-DOT-010 "二重の引用符の中の、どこにもない変数を、受け付けない" {
+    Worker scans l1 with kind Assignment, nameOk true, repeated false, form DoubleQuoted, hashGlued false, badEscape false, closed true, restOk true, variablesOk false
+    Worker keeps l1
     then rejected
   }
 }
