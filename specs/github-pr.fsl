@@ -18,9 +18,19 @@ fsl 5
 //                the pull request was merged or closed, when the last of the checks completed, or
 //                when the review was submitted. A review counts when it was submitted in or after
 //                the second that the step started to wait (worker-wait.fsl), its state is APPROVED,
-//                COMMENTED, or CHANGES_REQUESTED and in review.states, and its author is in
-//                review.authors, compared without case and without a [bot] suffix. Of the reviews
-//                that count, the one submitted first is answered.
+//                COMMENTED, or CHANGES_REQUESTED and in review.states, and the Reviewer rules count
+//                its author. A Reviewer is the author of one such review, with whether
+//                review.authors and review.authorAssociations are written, whether a name of
+//                review.authors matches the author, whether the association of the author is
+//                listed, and whether it is OWNER, MEMBER, or COLLABORATOR (maintainer). A name that
+//                ends with [bot], in any case, matches only a bot, and another name matches only an
+//                account that is not a bot; logins are compared without case. Only an account of
+//                the type Bot is a bot, and a mannequin, an organization, or an enterprise user
+//                account is not. A deleted account matches no name, not even ghost, while an
+//                account whose login is ghost matches ghost. An association that ugoke does not
+//                know is in no list. The answer reviewAuthor is the login with [bot] for a bot, and
+//                ghost for a deleted account. Of the reviews that count, the one submitted first is
+//                answered.
 // MODEL-GHP-003: one read of the pull request is modeled, with what came of it. gh runs without a
 //                shell, in the environment of the Worker, with its own login. A run of gh that
 //                takes over a minute is a transient error, and an output that is too large is a
@@ -54,6 +64,16 @@ requirements GithubPr {
     lifecycle Unread -> Judged
   }
 
+  entity Reviewer {
+    authorsGiven: Bool = false
+    associationsGiven: Bool = false
+    authorListed: Bool = false
+    associationListed: Bool = false
+    maintainer: Bool = false
+    lifecycle Unseen -> Counted
+    lifecycle Unseen -> Ignored
+  }
+
   entity Attempt {
     result: Result = Snapshot
     lifecycle Idle -> Tried -> Retried
@@ -61,6 +81,11 @@ requirements GithubPr {
     lifecycle Tried -> Read
   }
 
+  def counts(ag: Bool, sg: Bool, al: Bool, sl: Bool, mt: Bool) =
+    if ag and sg then al and sl
+    else if ag then al
+    else if sg then sl
+    else mt
   def judgeOf(s: State, m: Bool, c: Bool, wc: Bool, cd: Bool, wr: Bool, nr: Bool) =
     if s == Merged then (if m then AnsweredMerged else FailedStep)
     else if s == Closed then (if c then AnsweredClosed else FailedStep)
@@ -71,6 +96,10 @@ requirements GithubPr {
   event judge = Worker judges Look with state, wantsMerged, wantsClosed, wantsChecks, checksDone, wantsReview, newReview (Unread -> Judged)
     set outcome = judgeOf(input state, input wantsMerged, input wantsClosed, input wantsChecks, input checksDone, input wantsReview, input newReview)
     covers REQ-GHP-001 "github_pr は、pull request のマージ、クローズ、チェックの完了、レビューを、Worker で待つ"
+  event count = Worker counts Reviewer with authorsGiven, associationsGiven, authorListed, associationListed, maintainer (Unseen -> Counted)
+    covers REQ-GHP-007 "review.authors と review.authorAssociations をどちらも書かなければ、OWNER、MEMBER、COLLABORATOR のレビューだけを数える。片方だけ書けば、それに合うレビューを数える。両方書けば、両方に合うレビューだけを数える"
+  event ignore = Worker ignores Reviewer with authorsGiven, associationsGiven, authorListed, associationListed, maintainer (Unseen -> Ignored)
+    covers REQ-GHP-007 "review.authors と review.authorAssociations をどちらも書かなければ、OWNER、MEMBER、COLLABORATOR のレビューだけを数える。片方だけ書けば、それに合うレビューを数える。両方書けば、両方に合うレビューだけを数える"
   event try = GitHub answers Attempt with result (Idle -> Tried)
     covers REQ-GHP-005 "通信や GitHub の一時的なエラーと、レート制限のあいだは、待って確かめ直す。gh がない、ログインしていない、pull request を読めないときは、ステップは失敗する"
   event retry = Worker retries Attempt (Tried -> Retried)
@@ -86,6 +115,10 @@ requirements GithubPr {
   rule REQ-GHP-004 "checks は、checks.names のチェックがすべて終わると答える。review は、待ち始めたあとに出された、数えるレビューで答える" {
     ChecksNeedAll: always Look in Judged has outcome != AnsweredChecks or (wantsChecks and checksDone)
     ReviewNeedsNew: always Look in Judged has outcome != AnsweredReview or (wantsReview and newReview)
+  }
+  rule REQ-GHP-007 "review.authors と review.authorAssociations をどちらも書かなければ、OWNER、MEMBER、COLLABORATOR のレビューだけを数える。片方だけ書けば、それに合うレビューを数える。両方書けば、両方に合うレビューだけを数える" {
+    allow Worker counts Reviewer only when counts(input authorsGiven, input associationsGiven, input authorListed, input associationListed, input maintainer)
+    allow Worker ignores Reviewer only when not counts(input authorsGiven, input associationsGiven, input authorListed, input associationListed, input maintainer)
   }
   rule REQ-GHP-005 "通信や GitHub の一時的なエラーと、レート制限のあいだは、待って確かめ直す。gh がない、ログインしていない、pull request を読めないときは、ステップは失敗する" {
     allow Worker retries Attempt only when result == Transient or result == RateLimited
@@ -139,8 +172,34 @@ requirements GithubPr {
     Worker retries a1
     then rejected
   }
+
+  scenario AC-GHP-012 "何も書かなければ、メンテナーのレビューを数える" {
+    Worker counts r1 with authorsGiven false, associationsGiven false, authorListed false, associationListed false, maintainer true
+    then r1 is Counted
+  }
+  scenario AC-GHP-013 "authors だけなら、関わり方に関わらず数える" {
+    Worker counts r1 with authorsGiven true, associationsGiven false, authorListed true, associationListed false, maintainer false
+    then r1 is Counted
+  }
+  scenario AC-GHP-014 "両方を書けば、関わり方が合わないレビューは数えない" {
+    Worker ignores r1 with authorsGiven true, associationsGiven true, authorListed true, associationListed false, maintainer true
+    then r1 is Ignored
+  }
+  forbidden FB-GHP-012 "何も書かなければ、メンテナーでない人のレビューを数えない" {
+    Worker counts r1 with authorsGiven false, associationsGiven false, authorListed false, associationListed false, maintainer false
+    then rejected
+  }
+  forbidden FB-GHP-013 "authors に合わないレビューを、メンテナーでも数えない" {
+    Worker counts r1 with authorsGiven true, associationsGiven false, authorListed false, associationListed false, maintainer true
+    then rejected
+  }
+  forbidden FB-GHP-014 "authorAssociations に合わない関わり方のレビューを、数えない" {
+    Worker counts r1 with authorsGiven false, associationsGiven true, authorListed false, associationListed false, maintainer true
+    then rejected
+  }
 }
 verify {
   instances Look = 1
+  instances Reviewer = 1
   instances Attempt = 1
 }
