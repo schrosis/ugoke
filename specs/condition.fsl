@@ -13,11 +13,12 @@ fsl 5
 // MODEL-CND-004: missing tells whether a reference is null because it goes through null, reads an
 //                output of a step that did not run, or reads an env.<name> that is not set.
 //                unreadable tells whether a reference cannot be read otherwise, such as a field of
-//                result.data that the result does not have, or an index past the end of an array,
-//                such as result.data.items[1] of one item; an index of steps.<step>.visits is under
-//                steps, and reads as null. Only the name itself makes env.<name> null; a reference
-//                below it, such as env.A.B, is an error of the definition, as a field of any value
-//                is (validate-expressions.fsl). References are read as templates read them
+//                result.data that properties of the schema does not declare and the result does not
+//                have (ai-step.fsl, REQ-AIS-007), or an index past the end of an array, such as
+//                result.data.items[1] of one item; an index of steps.<step>.visits is under steps,
+//                and reads as null. Only the name itself makes env.<name> null; a reference below
+//                it, such as env.A.B, is an error of the definition, as a field of any value is
+//                (validate-expressions.fsl). References are read as templates read them
 //                (template-values.fsl).
 // MODEL-CND-002: one comparison or one operand is modeled when the condition is evaluated. The
 //                kinds of the two values that == or != compares, whether they are equal, and, for
@@ -132,7 +133,7 @@ requirements Condition {
     Worker compares m1 with holds true
     then m1 is Compared
   }
-  scenario AC-CND-007 "結果にない result.data の項目は、ステップを失敗させる" {
+  scenario AC-CND-007 "properties にない、結果にない result.data の項目は、ステップを失敗させる" {
     Worker misses m1 with unreadable true
     then m1 is Broken
   }
