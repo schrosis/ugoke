@@ -1,0 +1,163 @@
+fsl 5
+// Requirements for the functions of ${{ }} expressions, which a template and the condition of a
+// branch can call. trim is the only function.
+// Source: docs/reference/workflow-definition.md ("式", "関数", "分岐")
+//
+// MODEL-FUN-001: one call is modeled. Whether it names a function that exists, whether it has
+//                the number of arguments that the function takes, whether it has references in
+//                its arguments, and whether the value of its argument is a string are given when it
+//                is written. A call without references is evaluated when the definition is
+//                checked, so such a call that fails is an error of the definition; a call with
+//                references is evaluated when the step reads it, and fails the step then. The
+//                arguments are evaluated from left to right before the call. && and || do not
+//                evaluate their right side when the left side decides, and so do not call the
+//                functions there (condition.fsl).
+// MODEL-FUN-002: an argument is a reference, a call, or a literal: a string in single quotes, a
+//                number, true, false, or null. An operator cannot be an argument. A function name
+//                starts with a small letter and is followed by ( at once; with white space between,
+//                the name is a reference and ( an operator, which is an error. true, false, and
+//                null before ( stay literals. A }} in a quoted string does not close the
+//                expression, and a string that is not closed is an error.
+// MODEL-FUN-003: trim removes the white space and the line terminators at the start and the end
+//                of a string, as String.prototype.trim does. It takes one argument, and fails on
+//                any value that is not a string, null included, rather than converting it. The
+//                outputs of a step that did not run, an input of the workflow without a default
+//                that was not given, and, in a condition, an env.<name> that is not set are null.
+// MODEL-FUN-004: the inside of ${{ }} in a template is one reference or one call. A literal alone
+//                and an operator are errors of the definition there; the operators are for the if
+//                of next (condition.fsl). A template that is one call keeps the type of its value,
+//                as one reference does (template-values.fsl). A reference in the arguments is read
+//                as any reference of the place is: in a template, a step that did not run reads as
+//                null, and another reference that cannot be read fails the step; in a condition,
+//                as condition.fsl tells.
+requirements ExpressionFunctions {
+  actor Author, Ugoke
+
+  entity Call {
+    known: Bool = false
+    arityOk: Bool = false
+    hasReferences: Bool = false
+    stringArgument: Bool = false
+    lifecycle Unwritten -> Written -> Checked -> Evaluated
+    lifecycle Written -> Invalid
+    lifecycle Checked -> Failed
+  }
+
+  entity Template {
+    referenceOrCall: Bool = false
+    operatorUsed: Bool = false
+    lifecycle Blank -> Drafted -> Accepted
+    lifecycle Drafted -> Rejected
+  }
+
+  def checks(k: Bool, a: Bool, r: Bool, s: Bool) = k and a and (r or s)
+
+  event write = Author writes Call with known, arityOk, hasReferences, stringArgument (Unwritten -> Written)
+    covers REQ-FUN-001 "${{ }} の式と分岐の if では、関数を呼べる。今ある関数は trim だけ"
+  event accept = Ugoke accepts Call (Written -> Checked)
+  event reject = Ugoke rejects Call (Written -> Invalid)
+  event evaluate = Ugoke evaluates Call (Checked -> Evaluated)
+    covers REQ-FUN-004 "trim は、文字列の前後の空白と改行を取り除く。文字列でない値を渡すと、null でも、ステップは失敗する"
+  event fail = Ugoke fails Call (Checked -> Failed)
+    covers REQ-FUN-004 "trim は、文字列の前後の空白と改行を取り除く。文字列でない値を渡すと、null でも、ステップは失敗する"
+
+  event draft = Author drafts Template with referenceOrCall, operatorUsed (Blank -> Drafted)
+    covers REQ-FUN-005 "テンプレートの ${{ }} に書けるのは、参照 1 つか、関数の呼び出し 1 つ。値だけと、演算子は、定義のエラー"
+  event take = Ugoke takes Template (Drafted -> Accepted)
+  event refuse = Ugoke refuses Template (Drafted -> Rejected)
+
+  rule REQ-FUN-002 "ない関数と、引数の数が違う呼び出しは、定義のエラー" {
+    allow Ugoke accepts Call only when checks(known, arityOk, hasReferences, stringArgument)
+    allow Ugoke rejects Call only when not checks(known, arityOk, hasReferences, stringArgument)
+  }
+  rule REQ-FUN-003 "参照を含まない呼び出しは、実行する前に値を求める。失敗する呼び出しは、定義のエラー" {
+    NoFailureWithoutReferences: always Call in Failed has hasReferences
+  }
+  rule REQ-FUN-004 "trim は、文字列の前後の空白と改行を取り除く。文字列でない値を渡すと、null でも、ステップは失敗する" {
+    allow Ugoke evaluates Call only when stringArgument
+    allow Ugoke fails Call only when not stringArgument
+  }
+  rule REQ-FUN-005 "テンプレートの ${{ }} に書けるのは、参照 1 つか、関数の呼び出し 1 つ。値だけと、演算子は、定義のエラー" {
+    allow Ugoke takes Template only when referenceOrCall and not operatorUsed
+    allow Ugoke refuses Template only when not referenceOrCall or operatorUsed
+  }
+
+  scenario AC-FUN-001 "参照を trim して、値を求める" {
+    Author writes c1 with known true, arityOk true, hasReferences true, stringArgument true
+    Ugoke accepts c1
+    Ugoke evaluates c1
+    then c1 is Evaluated
+  }
+  scenario AC-FUN-002 "null を trim すると、ステップは失敗する" {
+    Author writes c1 with known true, arityOk true, hasReferences true, stringArgument false
+    Ugoke accepts c1
+    Ugoke fails c1
+    then c1 is Failed
+  }
+  scenario AC-FUN-003 "trim(3) は、定義のエラー" {
+    Author writes c1 with known true, arityOk true, hasReferences false, stringArgument false
+    Ugoke rejects c1
+    then c1 is Invalid
+  }
+  scenario AC-FUN-004 "ない関数は、定義のエラー" {
+    Author writes c1 with known false, arityOk true, hasReferences true, stringArgument true
+    Ugoke rejects c1
+    then c1 is Invalid
+  }
+  scenario AC-FUN-005 "引数の数が違えば、定義のエラー" {
+    Author writes c1 with known true, arityOk false, hasReferences true, stringArgument true
+    Ugoke rejects c1
+    then c1 is Invalid
+  }
+  scenario AC-FUN-006 "テンプレートに、呼び出しを書ける" {
+    Author drafts t1 with referenceOrCall true, operatorUsed false
+    Ugoke takes t1
+    then t1 is Accepted
+  }
+  scenario AC-FUN-007 "テンプレートの演算子は、定義のエラー" {
+    Author drafts t1 with referenceOrCall true, operatorUsed true
+    Ugoke refuses t1
+    then t1 is Rejected
+  }
+
+  forbidden FB-FUN-001 "ない関数を、受け付けない" {
+    Author writes c1 with known false, arityOk true, hasReferences true, stringArgument true
+    Ugoke accepts c1
+    then rejected
+  }
+  forbidden FB-FUN-002 "引数の数が違う呼び出しを、受け付けない" {
+    Author writes c1 with known true, arityOk false, hasReferences true, stringArgument true
+    Ugoke accepts c1
+    then rejected
+  }
+  forbidden FB-FUN-003 "参照のない、失敗する呼び出しを、受け付けない" {
+    Author writes c1 with known true, arityOk true, hasReferences false, stringArgument false
+    Ugoke accepts c1
+    then rejected
+  }
+  forbidden FB-FUN-004 "文字列でない値を、trim しない" {
+    Author writes c1 with known true, arityOk true, hasReferences true, stringArgument false
+    Ugoke accepts c1
+    Ugoke evaluates c1
+    then rejected
+  }
+  forbidden FB-FUN-005 "受け付けられる呼び出しを、断らない" {
+    Author writes c1 with known true, arityOk true, hasReferences true, stringArgument false
+    Ugoke rejects c1
+    then rejected
+  }
+  forbidden FB-FUN-006 "テンプレートの演算子を、受け付けない" {
+    Author drafts t1 with referenceOrCall true, operatorUsed true
+    Ugoke takes t1
+    then rejected
+  }
+  forbidden FB-FUN-007 "値だけのテンプレートを、受け付けない" {
+    Author drafts t1 with referenceOrCall false, operatorUsed false
+    Ugoke takes t1
+    then rejected
+  }
+}
+verify {
+  instances Call = 1
+  instances Template = 1
+}

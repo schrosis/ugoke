@@ -4,7 +4,9 @@ fsl 5
 //
 // MODEL-TPL-001: a template has one reference. Whether it is the whole template, whether it is
 //                written in run, prompt, or env, and the kind of the value it names are given
-//                when it is written. Arrays count as objects.
+//                when it is written. Arrays count as objects. A template that is one call of a
+//                function, such as trim, is modeled as one reference whose kind is the value of
+//                the call (expression-functions.fsl).
 requirements TemplateValues {
   enum Kind { NoKind, TextKind, NumberKind, BooleanKind, NullKind, ObjectKind }
   enum Embedding { NoEmbedding, AsIs, AsEmpty, AsJson }

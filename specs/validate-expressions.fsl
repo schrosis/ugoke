@@ -1,7 +1,9 @@
 fsl 5
 // Design of the reference check of expressions. validateExpressions
 // (packages/core/src/intermediate/expressions.ts) checks each reference in turn: the roots that
-// the place may use, the steps that run before, the declared names, and a field of a value.
+// the place may use, the steps that run before, the declared names, and a field of a value. A
+// reference in the arguments of a call is checked in the same way. The calls themselves are
+// checked before (expression-functions.fsl).
 //
 // It refines the requirements of step-references.fsl.
 spec ValidateExpressions {
