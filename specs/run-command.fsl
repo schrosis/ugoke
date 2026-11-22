@@ -12,6 +12,7 @@ fsl 5
 // MODEL-CMD-003: a problem in the configuration file of the project (project-config.fsl) ends the
 //                command with 1 before it runs anything, as definitionOk false does, even with
 //                --address.
+// MODEL-CMD-004: ugoke run --detach, which does not follow the run, is in run-detach.fsl.
 requirements RunCommand {
   enum Exit { Running, Zero, One, Three, OneThirty }
   enum Line { NoLine, OnStdout, OnStderr }
