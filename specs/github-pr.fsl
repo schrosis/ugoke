@@ -27,11 +27,11 @@ fsl 5
 //                fatal one. A transient error is checked again after an interval that doubles while
 //                errors continue, up to five minutes or the poll interval if it is longer. A rate
 //                limit is waited for until it resets and a second more, when it resets within an
-//                hour; otherwise it is waited for as a transient error. A rate limit does not count
-//                as an error in a row. The resident process writes to its log while errors continue
-//                and when a read succeeds again (worker-wait.fsl). The last 100 reviews are read,
-//                and the author of a deleted account is ghost. Checks read while the head moves are
-//                left out until the next read.
+//                hour; otherwise it is waited for as a transient error. A rate limit that resets
+//                within an hour does not count as an error in a row. The resident process writes to
+//                its log while errors continue and when a read succeeds again (worker-wait.fsl).
+//                The last 100 reviews are read, and the author of a deleted account is ghost.
+//                Checks read while the head moves are left out until the next read.
 // MODEL-GHP-004: the method answers in the Worker (respondIn: worker), so ugoke inbox list does not
 //                show it, and ugoke inbox answer and a follower cannot answer it (worker-wait.fsl).
 //                An engine that does not tell when the step started to wait fails the step. The

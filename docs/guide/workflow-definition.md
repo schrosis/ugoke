@@ -99,7 +99,7 @@ $ ugoke run deploy --input '{"env": "staging"}'
 
 ## 人の判断を待つ
 
-`type: wait` のステップは、人の答えを待ちます。`method: terminal` は、`ugoke run` のターミナルで聞きます。
+`type: wait` のステップは、答えを待ちます。`method: terminal` は、`ugoke run` のターミナルで人に聞きます。pull request の出来事を待つ [`github_pr`](../reference/wait-methods/github-pr.md) など、ほかの待ち方は、リファレンスの「[待ち方](../reference/README.md#待ち方)」にあります。
 
 ```yaml
 version: v0.1
