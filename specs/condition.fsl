@@ -1,7 +1,8 @@
 fsl 5
 // Requirements for the condition of a branch: how it is written, what it compares, and when it
 // fails the step.
-// Source: docs/reference/workflow-definition.md ("分岐")
+// Source: docs/reference/workflow-definition.md ("分岐"). The values that the definition shows can
+// never be true or false are errors of the definition, which condition-types.fsl describes.
 //
 // MODEL-CND-001: whether the condition is one ${{ }} expression, and whether its operators,
 //                parentheses, references, and literals are written correctly, are given when it is
