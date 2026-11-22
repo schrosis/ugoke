@@ -263,7 +263,11 @@ describe("parseDotenv variables", () => {
     ["${NAME} unquoted", "A=${HOME}bin\n", { A: "/home/mebin" }],
     ["$NAME in double quotes", 'A="$HOME and ${USER}"\n', { A: "/home/me and me" }],
     ["an earlier line", "B=/srv\nA=${B}/app\n", { A: "/srv/app", B: "/srv" }],
-    ["an earlier line over the environment", "HOME=/srv\nA=$HOME\n", { A: "/srv", HOME: "/srv" }],
+    [
+      "the environment over an earlier line",
+      "HOME=/srv\nA=$HOME\n",
+      { A: "/home/me", HOME: "/srv" },
+    ],
     ["the environment for the name itself", "HOME=$HOME/x\n", { HOME: "/home/me/x" }],
     ["an empty variable", "A=[$EMPTY]\n", { A: "[]" }],
     ["a $ that a name does not follow", "A=$5 and a$\n", { A: "$5 and a$" }],
@@ -292,6 +296,13 @@ describe("parseDotenv variables", () => {
     ["a brace with a bad name", 'A="${1A}"\n', [{ line: 1, message: reference }]],
   ])("reports %s", (_, text, errors) => {
     expect(parseDotenv(text, inherited)).toEqual({ errors, ok: false });
+  });
+
+  it("expands with a variable that the environment overrides, as the step sees it", () => {
+    expect(parseDotenv("BASE=/srv/app\nLOG_DIR=${BASE}/logs\n", { BASE: "/ci" })).toEqual({
+      ok: true,
+      values: { BASE: "/srv/app", LOG_DIR: "/ci/logs" },
+    });
   });
 
   it("does not read a name that objects inherit from the environment", () => {

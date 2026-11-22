@@ -222,8 +222,10 @@ const readUnquoted = (
 };
 
 /**
- * Expands the variables of a value with the values of the earlier lines, and then with the
- * inherited environment. A value that a variable gives is not expanded again.
+ * Expands the variables of a value with the inherited environment, and then with the values of
+ * the earlier lines. The environment comes first, as it does over the file for the step, so that
+ * a variable that the environment overrides, such as BASE in `LOG_DIR=${BASE}/logs`, gives the
+ * value that the step sees. A value that a variable gives is not expanded again.
  *
  * @returns The value, or the line of the first variable that is not set.
  */
@@ -239,8 +241,8 @@ const expand = (
       continue;
     }
     const found =
-      earlier.get(part.variable) ??
-      (Object.hasOwn(inherited, part.variable) ? inherited[part.variable] : undefined);
+      (Object.hasOwn(inherited, part.variable) ? inherited[part.variable] : undefined) ??
+      earlier.get(part.variable);
     if (found === undefined) {
       return { unsetOn: part.line };
     }
@@ -262,8 +264,8 @@ const expand = (
  *   allowed.
  *
  * Quoted values may span lines, and only whitespace and a comment may follow them. Variables such
- * as `$HOME` and `${HOME}` are expanded in unquoted values and in double quotes, with the values of
- * the earlier lines first, and then with the inherited environment. A `$` that neither a name nor
+ * as `$HOME` and `${HOME}` are expanded in unquoted values and in double quotes, with the inherited
+ * environment first, and then with the values of the earlier lines. A `$` that neither a name nor
  * `{` follows is a `$`. A variable that neither gives fails the line.
  *
  * Every malformed line is reported, and no values are returned when there is any. The text after a
@@ -366,7 +368,7 @@ export type DotenvResult =
  * each time a step runs, so its values never enter the workflow history. A file that a symbolic
  * link puts outside of the working directory is not read.
  *
- * @param inherited The environment that variables in values are expanded with after the earlier
+ * @param inherited The environment that variables in values are expanded with before the earlier
  *   lines, which is that of this process by default.
  */
 export const readDotenv = (
