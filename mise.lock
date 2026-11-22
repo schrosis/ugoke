@@ -3,44 +3,51 @@
 lockfile_version = 4
 
 [[tools."aqua:temporalio/cli"]]
-version = "1.10.0"
+version = "1.10.1"
 backend = "aqua:temporalio/cli"
-specifiers = ["1.10.0"]
+specifiers = ["1.10.1"]
 
 [tools."aqua:temporalio/cli"."platforms.linux-arm64"]
-checksum = "sha256:6e526d2f089bf5acead2129f1f63e303b848410d5d9d86b9255359dcea6eaaa8"
-url = "https://github.com/temporalio/cli/releases/download/v1.10.0/temporal_cli_1.10.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/703909582"
+checksum = "sha256:2f748e9411b37c9cabb57f1f08e37765388c12b5534432c7aea28b593df9145d"
+checksum_source = "mise-versions"
+url = "https://github.com/temporalio/cli/releases/download/v1.10.1/temporal_cli_1.10.1_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/744972367"
 
 [tools."aqua:temporalio/cli"."platforms.linux-arm64-musl"]
-checksum = "sha256:6e526d2f089bf5acead2129f1f63e303b848410d5d9d86b9255359dcea6eaaa8"
-url = "https://github.com/temporalio/cli/releases/download/v1.10.0/temporal_cli_1.10.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/703909582"
+checksum = "sha256:2f748e9411b37c9cabb57f1f08e37765388c12b5534432c7aea28b593df9145d"
+checksum_source = "mise-versions"
+url = "https://github.com/temporalio/cli/releases/download/v1.10.1/temporal_cli_1.10.1_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/744972367"
 
 [tools."aqua:temporalio/cli"."platforms.linux-x64"]
-checksum = "sha256:521f461f3d108902763bb71e85cd0fd382dc9357b59604ae03da6ae734d16890"
-url = "https://github.com/temporalio/cli/releases/download/v1.10.0/temporal_cli_1.10.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/703909584"
+checksum = "sha256:4c1500e2ce2d4de136e5fe8852d9b7f82eb62f19b6b383b3e0c040519a9d20b1"
+checksum_source = "mise-versions"
+url = "https://github.com/temporalio/cli/releases/download/v1.10.1/temporal_cli_1.10.1_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/744972360"
 
 [tools."aqua:temporalio/cli"."platforms.linux-x64-musl"]
-checksum = "sha256:521f461f3d108902763bb71e85cd0fd382dc9357b59604ae03da6ae734d16890"
-url = "https://github.com/temporalio/cli/releases/download/v1.10.0/temporal_cli_1.10.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/703909584"
+checksum = "sha256:4c1500e2ce2d4de136e5fe8852d9b7f82eb62f19b6b383b3e0c040519a9d20b1"
+checksum_source = "mise-versions"
+url = "https://github.com/temporalio/cli/releases/download/v1.10.1/temporal_cli_1.10.1_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/744972360"
 
 [tools."aqua:temporalio/cli"."platforms.macos-arm64"]
-checksum = "sha256:40a76ef7d525e6195b083e4cd50b184cc3bb242fea7f8dda2b9a8698ecbb7379"
-url = "https://github.com/temporalio/cli/releases/download/v1.10.0/temporal_cli_1.10.0_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/703909583"
+checksum = "sha256:94f7f982b26438e8abbde6000ba471b694be6a2413b31f6162f87a9f9c48c738"
+checksum_source = "mise-versions"
+url = "https://github.com/temporalio/cli/releases/download/v1.10.1/temporal_cli_1.10.1_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/744972370"
 
 [tools."aqua:temporalio/cli"."platforms.macos-x64"]
-checksum = "sha256:150603ba135dc5f40f0a8f33b1a09732469692fae9a78e3024318e83f023136a"
-url = "https://github.com/temporalio/cli/releases/download/v1.10.0/temporal_cli_1.10.0_darwin_amd64.tar.gz"
-url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/703909577"
+checksum = "sha256:8ec6c513ad2177de4eb15d2cb17a4fe5070e6078afd7f80bdfcc37fae459d3c4"
+checksum_source = "mise-versions"
+url = "https://github.com/temporalio/cli/releases/download/v1.10.1/temporal_cli_1.10.1_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/744972371"
 
 [tools."aqua:temporalio/cli"."platforms.windows-x64"]
-checksum = "sha256:08dc600ed4e6ed3ecd9ffc135ac8834c679a96275a5709acfa4034e1b42ad8db"
-url = "https://github.com/temporalio/cli/releases/download/v1.10.0/temporal_cli_1.10.0_windows_amd64.tar.gz"
-url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/703909742"
+checksum = "sha256:36a9c7355cce5c8bcf9469c1a679bef764545c62f154570b2a35e2a8fc61f4e2"
+checksum_source = "mise-versions"
+url = "https://github.com/temporalio/cli/releases/download/v1.10.1/temporal_cli_1.10.1_windows_amd64.tar.gz"
+url_api = "https://api.github.com/repos/temporalio/cli/releases/assets/744972499"
 
 [[tools."github:ymm-oss/fsl"]]
 version = "5.1.0"

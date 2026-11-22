@@ -1,5 +1,5 @@
 [tools]
-"aqua:temporalio/cli" = "1.10.0"
+"aqua:temporalio/cli" = "1.10.1"
 node = "26.13.1"
 pnpm = "12.21.0"
 
