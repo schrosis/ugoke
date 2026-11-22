@@ -10,21 +10,27 @@ fsl 5
 //                !=, and then !. == and != compare two values, so a == b == c is an error. Which
 //                values it may reference is in step-references.fsl. A call of a function, such as
 //                trim(outputs.verdict), is a value as a reference is (expression-functions.fsl).
-// MODEL-CND-004: missing tells whether a reference is null because it goes through null, reads
-//                an output of a step that did not run, or reads an env.<name> that is not set.
+// MODEL-CND-004: missing tells whether a reference is null because it goes through null, reads an
+//                output of a step that did not run, or reads an env.<name> that is not set.
 //                unreadable tells whether a reference cannot be read otherwise, such as a field of
-//                result.data that the result does not have.
+//                result.data that the result does not have, or an index past the end of an array,
+//                such as result.data.items[1] of one item; an index of steps.<step>.visits is under
+//                steps, and reads as null. Only the name itself makes env.<name> null; a reference
+//                below it, such as env.A.B, is an error of the definition, as a field of any value
+//                is (validate-expressions.fsl). References are read as templates read them
+//                (template-values.fsl).
 // MODEL-CND-002: one comparison or one operand is modeled when the condition is evaluated. The
 //                kinds of the two values that == or != compares, whether they are equal, and, for
 //                objects and arrays, whether they are the same value, which an equal content is
 //                not, are given then, and so is whether an operand of !, &&, or ||, or the whole
 //                condition, is true or false. && and || do not evaluate their right side when the
-//                left side decides. A reference reads only the values that the step has, so a
-//                name that a value only inherits, such as constructor, reads as null.
-// MODEL-CND-003: env.<name> reads the variables that the step inherits, over which dotenv does
-//                not replace a variable, and then env of the workflow and of the step. A wait step
-//                has no env of its own. dotenv is read only for a condition that reads env, so that
-//                a file that cannot be read fails only such a step.
+//                left side decides. A reference reads only the own values that the step has, so a
+//                name that a value only inherits, such as constructor, cannot be read, and fails
+//                the step as an unreadable reference does (MODEL-CND-004).
+// MODEL-CND-003: env.<name> reads the variables that the step inherits, over which dotenv does not
+//                replace a variable, and then env of the workflow and of the step. A wait step has
+//                no env of its own. dotenv is read only for a condition that reads env, so that a
+//                file that cannot be read fails only such a step.
 requirements Condition {
   enum Kind { TextKind, NumberKind, BooleanKind, NullKind, ObjectKind }
   actor Author, Ugoke, Worker
