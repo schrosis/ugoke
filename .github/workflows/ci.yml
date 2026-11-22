@@ -22,7 +22,7 @@ jobs:
           # The base of a pull request is the first parent of its merge commit.
           fetch-depth: 2
           persist-credentials: false
-      - uses: jdx/mise-action@v5.2.9
+      - uses: jdx/mise-action@v5.2.10
       - id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6.1.0
