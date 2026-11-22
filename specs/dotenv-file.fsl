@@ -81,7 +81,7 @@ requirements DotenvFile {
   rule REQ-DOT-002 "名前は env と同じ決まりで書き、同じ名前を 2 度は書けない" {
     allow Worker keeps Line only when lineOk(kind, nameOk, repeated, form, hashGlued, badEscape, closed, restOk, variablesOk)
   }
-  rule REQ-DOT-003 "値は、引用符なし、一重の引用符で囲む、二重の引用符で囲むのどれかで書く。引用符なしでは、空白のあとの # からがコメント。二重の引用符の中では、バックスラッシュは改行の n の前だけに書ける。閉じた引用符のあとは、空白とコメントだけ。バッククォートで囲んだ値は書けない" {
+  rule REQ-DOT-003 "値は、引用符なし、一重の引用符で囲む、二重の引用符で囲むのどれかで書く。引用符なしでは、空白のあとの # からがコメント。二重の引用符の中では、バックスラッシュは改行の n と $ の前だけに書ける。閉じた引用符のあとは、空白とコメントだけ。バッククォートで囲んだ値は書けない" {
     allow Worker marks Line only when kind != BlankLine and kind != CommentLine and not lineOk(kind, nameOk, repeated, form, hashGlued, badEscape, closed, restOk, variablesOk)
     allow Worker skips Line only when kind == BlankLine or kind == CommentLine
   }
@@ -129,7 +129,7 @@ requirements DotenvFile {
     Worker keeps l1
     then rejected
   }
-  forbidden FB-DOT-002 "二重の引用符の中の、改行でないバックスラッシュを、受け付けない" {
+  forbidden FB-DOT-002 "二重の引用符の中の、n と $ の前でないバックスラッシュを、受け付けない" {
     Worker scans l1 with kind Assignment, nameOk true, repeated false, form DoubleQuoted, hashGlued false, badEscape true, closed true, restOk true, variablesOk true
     Worker keeps l1
     then rejected
