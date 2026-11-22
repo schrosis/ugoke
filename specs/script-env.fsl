@@ -12,7 +12,8 @@ fsl 5
 //                its path keeps the rule are given when the definition is written.
 // MODEL-ENV-002: whether the dotenv file can be read inside the project root, and which of the
 //                dotenv file, the process, env of the workflow, and env of the step give a value
-//                for the name, are given when the step runs.
+//                for the name, are given when the step runs. A dotenv file that is not in the
+//                format of dotenv-file.fsl cannot be read either.
 // MODEL-ENV-003: values are not modeled. A number or a boolean in env becomes a string as written,
 //                as the reference says. valueOk is false also for a number or a boolean whose text
 //                YAML reads differently, such as 1.10, 1.0, 00123, 0x1F, 0o17, 1e3, +1, -0, .5,
