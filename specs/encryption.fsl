@@ -1,0 +1,170 @@
+fsl 5
+// Requirements for the encryption of the values that go through Temporal: a key of the user,
+// a Worker that accepts only values of that key, and runs of other keys that stay out of sight.
+// Source: docs/explanation/architecture.md ("値の暗号化"). The algorithm and the file of the key
+// are kept here only, and not in the docs.
+//
+// MODEL-ENC-001: one load of the key is modeled. Whether its file is missing, holds a key, or holds
+//                something else is given when a command loads it. The key is 32 random bytes,
+//                written as lowercase hex in encryption.key of the state directory with 600, and
+//                anything else, such as uppercase hex, is broken. The file appears
+//                with its whole content, and of commands that create it at once, the first wins and
+//                the others read its key. The commands that start, follow, or list runs load it,
+//                and the resident process loads it when it starts the Worker of a project.
+//                ugoke validate and ugoke daemon start do not. A key belongs to the state
+//                directory, so each user of each computer has their own, and a run that another
+//                computer started on the same server is a run of another key. A lost key is
+//                Missing, so a new key is created, and the runs of the lost key become runs of
+//                another key, which cannot continue. In the resident process, a broken key fails
+//                the start of the Worker of a project like any other cause, and the next request
+//                tries again (workerStarts in daemon-projects.fsl), so a fixed key needs no
+//                restart of the resident process. A command that registers the project then fails
+//                with the error that the resident process answers, and ends with 1. Commands that
+//                create the key at once end with the same key.
+// MODEL-ENC-002: one value that reaches a Worker is modeled. What it is is given when it arrives.
+//                Each value is encrypted with AES-256-GCM and a new nonce, with every metadata
+//                entry, so the encoding is hidden too. A refused value fails the task, so a run
+//                that someone without the key starts never runs a step, and an activity that such
+//                a run schedules never runs. Authenticated encryption proves that a value comes
+//                from someone who holds the key, but a value from the history can be sent again.
+//                What Temporal keeps beside the values stays readable: the workflow ID, which has
+//                the name of the workflow, the messages of failures, and the names of the types
+//                and task queues, such as the sticky queue of a Worker with the host name.
+// MODEL-ENC-003: one run on the server is modeled when the runs of a project are listed. A client
+//                reads values that are not encrypted, such as the memos of runs from before the
+//                encryption, and reads a memo of another key as null, which then matches no
+//                project.
+requirements Encryption {
+  enum KeyFile { Missing, Holds, Broken }
+  enum Sealed { OwnKey, Plain, OtherKey, Changed }
+  enum Exit { Pending, Zero, One }
+  actor Ugoke, Worker
+
+  entity Key {
+    file: KeyFile = Missing
+    exitCode: Exit = Pending
+    lifecycle Unloaded -> Loading -> Ready
+    lifecycle Loading -> Failed
+  }
+
+  entity Value {
+    sealed: Sealed = OwnKey
+    lifecycle Arrived -> Accepted
+    lifecycle Arrived -> Refused
+  }
+
+  entity ListedRun {
+    memo: Sealed = OwnKey
+    lifecycle Found -> Shown
+    lifecycle Found -> Hidden
+  }
+
+  event load = Ugoke loads Key with file (Unloaded -> Loading)
+    covers REQ-ENC-001 "Temporal を通る値は、ユーザーの鍵で暗号化する。Temporal Server には読めない形で残る"
+  event create = Ugoke creates Key (Loading -> Ready)
+  event use = Ugoke uses Key (Loading -> Ready)
+  event fail = Ugoke rejects Key (Loading -> Failed)
+    set exitCode = One
+  event arrive = Worker receives Value with sealed in Arrived
+    covers REQ-ENC-004 "Worker は、ユーザーの鍵で暗号化された値だけを受け付ける。暗号化されていない値、ほかの鍵の値、書き換えられた値は断る"
+  event accept = Worker accepts Value (Arrived -> Accepted)
+  event refuse = Worker refuses Value (Arrived -> Refused)
+  event find = Ugoke finds ListedRun with memo in Found
+    covers REQ-ENC-005 "ほかの鍵で始めた実行は、実行の一覧に出ない"
+  event show = Ugoke shows ListedRun (Found -> Shown)
+  event hide = Ugoke hides ListedRun (Found -> Hidden)
+
+  rule REQ-ENC-002 "鍵がなければ、初めて使うときに作る。あれば、それを使う" {
+    allow Ugoke creates Key only when file == Missing
+    allow Ugoke uses Key only when file == Holds
+  }
+  rule REQ-ENC-003 "鍵が壊れていると、鍵を使うコマンドは終了ステータス 1 で失敗する。壊れた鍵は作り直さない" {
+    allow Ugoke rejects Key only when file == Broken
+    BrokenFails: always Key in Failed has exitCode == One
+  }
+  rule REQ-ENC-004 "Worker は、ユーザーの鍵で暗号化された値だけを受け付ける。暗号化されていない値、ほかの鍵の値、書き換えられた値は断る" {
+    allow Worker accepts Value only when sealed == OwnKey
+    allow Worker refuses Value only when sealed != OwnKey
+  }
+  rule REQ-ENC-005 "ほかの鍵で始めた実行は、実行の一覧に出ない" {
+    allow Ugoke shows ListedRun only when memo == OwnKey or memo == Plain
+    allow Ugoke hides ListedRun only when memo == OtherKey or memo == Changed
+  }
+
+  scenario AC-ENC-001 "鍵がなければ作る" {
+    Ugoke loads k1 with file Missing
+    Ugoke creates k1
+    then k1 is Ready
+  }
+  scenario AC-ENC-002 "鍵があれば、それを使う" {
+    Ugoke loads k1 with file Holds
+    Ugoke uses k1
+    then k1 is Ready
+  }
+  scenario AC-ENC-003 "鍵が壊れていれば、1 で失敗する" {
+    Ugoke loads k1 with file Broken
+    Ugoke rejects k1
+    then stage(k1) == Failed and k1.exitCode == One
+  }
+  scenario AC-ENC-004 "自分の鍵の値は受け付ける" {
+    Worker receives v1 with sealed OwnKey
+    Worker accepts v1
+    then v1 is Accepted
+  }
+  scenario AC-ENC-005 "ほかの鍵の値は断る" {
+    Worker receives v1 with sealed OtherKey
+    Worker refuses v1
+    then v1 is Refused
+  }
+  scenario AC-ENC-006 "ほかの鍵で始めた実行は、一覧に出ない" {
+    Ugoke finds r1 with memo OtherKey
+    Ugoke hides r1
+    then r1 is Hidden
+  }
+  scenario AC-ENC-007 "暗号化の前に始めた実行のメモも、一覧で読める" {
+    Ugoke finds r1 with memo Plain
+    Ugoke shows r1
+    then r1 is Shown
+  }
+
+  forbidden FB-ENC-001 "壊れた鍵を、作り直さない" {
+    Ugoke loads k1 with file Broken
+    Ugoke creates k1
+    then rejected
+  }
+  forbidden FB-ENC-002 "ある鍵を、作り直さない" {
+    Ugoke loads k1 with file Holds
+    Ugoke creates k1
+    then rejected
+  }
+  forbidden FB-ENC-003 "暗号化されていない値を、Worker は受け付けない" {
+    Worker receives v1 with sealed Plain
+    Worker accepts v1
+    then rejected
+  }
+  forbidden FB-ENC-004 "書き換えられた値を、Worker は受け付けない" {
+    Worker receives v1 with sealed Changed
+    Worker accepts v1
+    then rejected
+  }
+  forbidden FB-ENC-005 "ほかの鍵の値を、Worker は受け付けない" {
+    Worker receives v1 with sealed OtherKey
+    Worker accepts v1
+    then rejected
+  }
+  forbidden FB-ENC-006 "ほかの鍵で始めた実行を、一覧に出さない" {
+    Ugoke finds r1 with memo OtherKey
+    Ugoke shows r1
+    then rejected
+  }
+  forbidden FB-ENC-007 "ある鍵で、失敗しない" {
+    Ugoke loads k1 with file Holds
+    Ugoke rejects k1
+    then rejected
+  }
+}
+verify {
+  instances Key = 1
+  instances Value = 1
+  instances ListedRun = 1
+}

@@ -1,0 +1,245 @@
+fsl 5
+// Requirements for an AI step: the provider and the options that the definition names, the
+// session that a step that runs again continues, and how the step ends.
+// Source: docs/reference/workflow-definition.md ("ai ステップ")
+//
+// MODEL-AIS-001: whether a plugin provides the provider that the step names, whether with keeps the
+//                rules of the provider, whether a schema, when the step has one, has type: object,
+//                and session are given when the definition is written. The references of prompt,
+//                with, env, and outputs are described in step-references.fsl and ai-result.fsl.
+// MODEL-AIS-002: one visit of the step is modeled. Whether an earlier visit of the step in the same
+//                run left a session, and whether with still keeps the rules after its expressions
+//                are evaluated, are given when the step is about to run. A Worker that does not
+//                know the provider fails the step in the same way.
+// MODEL-AIS-003: the provider runs the step. What it says and does is shown as the output of the
+//                step, and the end of the step, a failure, or the timeout, come from the provider.
+//                Only the declared outputs enter the history of the run. Whether every field after
+//                result.data that the outputs and the branches reference can be read is given when
+//                the step ends (fieldsReadable). A field that properties of the schema declares,
+//                also in a nested object, reads as null when the result does not have it, so it can
+//                always be read; properties are followed only through objects, not through the
+//                items of arrays, nor through $ref or other keywords. A field that properties does
+//                not declare, which validation allows for such schemas as one with
+//                additionalProperties, cannot be read when the result does not have it. The result
+//                that the provider returned is not changed: the fields that it has are kept, also
+//                those that the schema does not declare, and so are those whose value is null. A
+//                field named __proto__, which the result has or which is filled with null, is an
+//                own field, and does not change the prototype of the value. A reference that goes
+//                through null, such as result.data.a.b where a is null, reads as null. A step with
+//                continueOnError that fails has result.data null, whose fields read as null, so
+//                REQ-AIS-007 does not apply to it (continue-on-error.fsl).
+requirements AiStep {
+  enum Session { Reuse, New }
+  actor Author, Ugoke, Worker, Provider, Clock
+
+  entity AiRun {
+    providerKnown: Bool = false
+    withOk: Bool = false
+    schemaOk: Bool = false
+    mode: Session = Reuse
+    withStillOk: Bool = false
+    hasSession: Bool = false
+    fieldsReadable: Bool = false
+    continued: Bool = false
+    timedOut: Bool = false
+    lifecycle Unwritten -> Written -> Accepted -> Prepared -> Started -> Succeeded
+    lifecycle Written -> Invalid
+    lifecycle Prepared -> Failed
+    lifecycle Started -> Failed
+    lifecycle Started -> Cancelled
+    lifecycle Prepared -> Cancelled
+  }
+
+  def continues(m: Session, h: Bool) = m == Reuse and h
+
+  event write = Author writes AiRun with providerKnown, withOk, schemaOk, mode (Unwritten -> Written)
+    covers REQ-AIS-001 "ai ステップは、プラグインが足すプロバイダーで、prompt の指示を AI に実行させる"
+  event accept = Ugoke accepts AiRun (Written -> Accepted)
+  event reject = Ugoke rejects AiRun (Written -> Invalid)
+  event prepare = Worker prepares AiRun with withStillOk, hasSession (Accepted -> Prepared)
+    covers REQ-AIS-001 "ai ステップは、プラグインが足すプロバイダーで、prompt の指示を AI に実行させる"
+  event refuse = Worker refuses AiRun (Prepared -> Failed)
+  event start = Worker starts AiRun with continued (Prepared -> Started)
+  event finish = Provider finishes AiRun with fieldsReadable (Started -> Succeeded)
+    covers REQ-AIS-001 "ai ステップは、プラグインが足すプロバイダーで、prompt の指示を AI に実行させる"
+  event withhold = Worker withholds AiRun (Prepared -> Cancelled)
+    covers REQ-AIS-006 "実行を取り消すと、動いている AI を止め、まだ始めていなければ始めずに、ステップは取り消しで終わる"
+  event cancel = Worker cancels AiRun (Started -> Cancelled)
+    covers REQ-AIS-006 "実行を取り消すと、動いている AI を止め、まだ始めていなければ始めずに、ステップは取り消しで終わる"
+  event miss = Worker misses AiRun with fieldsReadable (Started -> Failed)
+    covers REQ-AIS-007 "schema の properties に書いた項目が AI の結果になければ null と読む。properties にない名前の項目と、配列の要素の中の項目が結果になければ、参照したときに、AI を動かしたあとにステップは失敗する"
+  fault event fail = Provider fails AiRun (Started -> Failed)
+    covers REQ-AIS-005 "失敗した ai ステップは、やり直さない。timeout を過ぎると、失敗する"
+  fault event expire = Clock expires AiRun (Started -> Failed)
+    set timedOut = true
+    covers REQ-AIS-005 "失敗した ai ステップは、やり直さない。timeout を過ぎると、失敗する"
+
+  rule REQ-AIS-002 "知らないプロバイダーと、プロバイダーの決まりに合わない with は、定義のエラーにする" {
+    allow Ugoke accepts AiRun only when providerKnown and withOk and schemaOk
+    allow Ugoke rejects AiRun only when not (providerKnown and withOk and schemaOk)
+    AcceptedIsKnown: always AiRun in Prepared, Started, Succeeded has (providerKnown and withOk)
+  }
+  rule REQ-AIS-008 "schema は type: object で書く。プロバイダーは、構造のある結果をオブジェクトで返すため" {
+    never Ugoke accepts AiRun when not schemaOk
+  }
+  rule REQ-AIS-003 "with の式を評価した値が、プロバイダーの決まりに合わなければ、AI を動かさずに失敗する" {
+    allow Worker refuses AiRun only when not withStillOk
+    allow Worker starts AiRun only when withStillOk
+    StartedHasValidWith: always AiRun in Started, Succeeded has withStillOk
+  }
+  rule REQ-AIS-004 "同じ実行の中でステップがもう一度動くとき、session が reuse なら前のセッションを続け、new なら新しく始める。既定は reuse" {
+    allow Worker starts AiRun only when input continued == continues(mode, hasSession)
+    ContinuesOnlyWithReuse: always AiRun in Started, Succeeded has continued == continues(mode, hasSession)
+  }
+  // A failed step has no way to start again, so it is never retried.
+  rule REQ-AIS-005 "失敗した ai ステップは、やり直さない。timeout を過ぎると、失敗する" {
+    SucceededInTime: always AiRun in Succeeded has not timedOut
+  }
+
+  rule REQ-AIS-007 "schema の properties に書いた項目が AI の結果になければ null と読む。properties にない名前の項目と、配列の要素の中の項目が結果になければ、参照したときに、AI を動かしたあとにステップは失敗する" {
+    allow Provider finishes AiRun only when input fieldsReadable
+    allow Worker misses AiRun only when not input fieldsReadable
+    SucceededHasFields: always AiRun in Succeeded has fieldsReadable
+  }
+
+  scenario AC-AIS-008 "properties にない、参照した項目が結果になければ、失敗する" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker starts a1 with continued false
+    Worker misses a1 with fieldsReadable false
+    then a1 is Failed
+  }
+  scenario AC-AIS-010 "properties に書いた項目は、結果になくても null と読み、成功する" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker starts a1 with continued false
+    Provider finishes a1 with fieldsReadable true
+    then a1 is Succeeded
+  }
+  scenario AC-AIS-007 "実行を取り消すと、動いている AI を止める" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker starts a1 with continued false
+    Worker cancels a1
+    then a1 is Cancelled
+  }
+  scenario AC-AIS-009 "始める前に取り消すと、AI を始めない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker withholds a1
+    then a1 is Cancelled
+  }
+  scenario AC-AIS-001 "知っているプロバイダーで、AI を動かして終わる" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker starts a1 with continued false
+    Provider finishes a1 with fieldsReadable true
+    then a1 is Succeeded
+  }
+  scenario AC-AIS-002 "知らないプロバイダーは、定義のエラーになる" {
+    Author writes a1 with providerKnown false, withOk true, schemaOk true, mode Reuse
+    Ugoke rejects a1
+    then a1 is Invalid
+  }
+  scenario AC-AIS-003 "もう一度動くときは、前のセッションを続ける" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession true
+    Worker starts a1 with continued true
+    then a1 is Started
+  }
+  scenario AC-AIS-004 "session が new なら、前のセッションがあっても新しく始める" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode New
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession true
+    Worker starts a1 with continued false
+    then a1 is Started
+  }
+  scenario AC-AIS-005 "timeout を過ぎると、失敗する" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker starts a1 with continued false
+    Clock expires a1
+    then a1 is Failed
+  }
+  scenario AC-AIS-006 "評価した with が決まりに合わなければ、AI を動かさずに失敗する" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk false, hasSession false
+    Worker refuses a1
+    then a1 is Failed
+  }
+
+  forbidden FB-AIS-010 "type: object でない schema を、受け付けない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk false, mode Reuse
+    Ugoke accepts a1
+    then rejected
+  }
+  forbidden FB-AIS-001 "知らないプロバイダーの定義を、受け付けない" {
+    Author writes a1 with providerKnown false, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    then rejected
+  }
+  forbidden FB-AIS-002 "決まりに合わない with を、受け付けない" {
+    Author writes a1 with providerKnown true, withOk false, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    then rejected
+  }
+  forbidden FB-AIS-003 "正しい定義を、拒まない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode New
+    Ugoke rejects a1
+    then rejected
+  }
+  forbidden FB-AIS-004 "評価した with が決まりに合わないのに、AI を動かさない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk false, hasSession false
+    Worker starts a1 with continued false
+    then rejected
+  }
+  forbidden FB-AIS-005 "session が reuse なのに、前のセッションを捨てない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession true
+    Worker starts a1 with continued false
+    then rejected
+  }
+  forbidden FB-AIS-006 "session が new なのに、前のセッションを続けない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode New
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession true
+    Worker starts a1 with continued true
+    then rejected
+  }
+  forbidden FB-AIS-007 "前のセッションがないのに、続けたことにしない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker starts a1 with continued true
+    then rejected
+  }
+  forbidden FB-AIS-009 "outputs が参照した項目がないのに、成功にしない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker starts a1 with continued false
+    Provider finishes a1 with fieldsReadable false
+    then rejected
+  }
+  forbidden FB-AIS-008 "決まりに合う with で、失敗にしない" {
+    Author writes a1 with providerKnown true, withOk true, schemaOk true, mode Reuse
+    Ugoke accepts a1
+    Worker prepares a1 with withStillOk true, hasSession false
+    Worker refuses a1
+    then rejected
+  }
+}
+verify {
+  instances AiRun = 1
+}

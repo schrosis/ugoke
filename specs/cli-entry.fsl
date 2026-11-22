@@ -1,0 +1,149 @@
+fsl 5
+// Requirements for the entry of the ugoke command: help, the version, and errors in the command
+// line before a command runs.
+// Source: docs/reference/commands/ugoke.md
+//
+// MODEL-CLI-001: a command that is known and has all its arguments runs, and its own exit status
+//                is described with that command (run-command.fsl, validate-command.fsl).
+// MODEL-CLI-002: the help lists the commands in groups: Getting started (init and help), Run
+//                workflows, Write workflows, and Background. ugoke help <command> shows the help of
+//                a command, and ends with 1 for an unknown command.
+requirements CliEntry {
+  enum Given { NoCommand, HelpOption, VersionOption, KnownCommand, UnknownCommand }
+  enum Exit { Running, Zero, One }
+  actor User, Ugoke
+
+  entity Invocation {
+    given: Given = NoCommand
+    argumentsComplete: Bool = false
+    exitCode: Exit = Running
+    helpShown: Bool = false
+    lifecycle Untyped -> Typed -> Answered
+    lifecycle Typed -> Delegated
+    lifecycle Typed -> Errored
+  }
+
+  def answers(g: Given) = g == HelpOption or g == VersionOption
+  def errs(g: Given, a: Bool) = g == NoCommand or g == UnknownCommand or (g == KnownCommand and not a)
+
+  event type = User types Invocation with given, argumentsComplete (Untyped -> Typed)
+    covers REQ-CLI-001 "ugoke のコマンドの入り口"
+  event answer = Ugoke answers Invocation (Typed -> Answered)
+    set exitCode = Zero
+  event delegate = Ugoke delegates Invocation (Typed -> Delegated)
+    covers REQ-CLI-004 "知っているコマンドに引数がそろっていれば、そのコマンドを実行する"
+  event refuse = Ugoke refuses Invocation with helpShown (Typed -> Errored)
+    set exitCode = One
+
+  rule REQ-CLI-002 "--help と --version は、ヘルプかバージョンを表示し、終了ステータスは 0" {
+    allow Ugoke answers Invocation only when answers(given)
+    AnsweredExitsZero: always Invocation in Answered has exitCode == Zero
+  }
+  rule REQ-CLI-003 "コマンドを指定しないとき、知らないコマンドのとき、引数が足りないときは、終了ステータスは 1。コマンドを指定しないときは、ヘルプを表示する" {
+    allow Ugoke refuses Invocation only when errs(given, argumentsComplete) and (input helpShown == (given == NoCommand))
+    ErroredExitsOne: always Invocation in Errored has exitCode == One
+    HelpWithoutCommand: always Invocation in Errored has helpShown == (given == NoCommand)
+  }
+  rule REQ-CLI-004 "知っているコマンドに引数がそろっていれば、そのコマンドを実行する" {
+    allow Ugoke delegates Invocation only when given == KnownCommand and argumentsComplete
+  }
+
+  scenario AC-CLI-001 "--version はバージョンを表示して 0 で終わる" {
+    User types i1 with given VersionOption, argumentsComplete true
+    Ugoke answers i1
+    then i1 is Answered
+  }
+  scenario AC-CLI-002 "コマンドを指定しないと、ヘルプを表示して 1 で終わる" {
+    User types i1 with given NoCommand, argumentsComplete true
+    Ugoke refuses i1 with helpShown true
+    then i1 is Errored
+  }
+  scenario AC-CLI-003 "知らないコマンドは 1 で終わる" {
+    User types i1 with given UnknownCommand, argumentsComplete true
+    Ugoke refuses i1 with helpShown false
+    then i1 is Errored
+  }
+  scenario AC-CLI-004 "引数がそろったコマンドを実行する" {
+    User types i1 with given KnownCommand, argumentsComplete true
+    Ugoke delegates i1
+    then i1 is Delegated
+  }
+
+  scenario AC-CLI-005 "--help はヘルプを表示して 0 で終わる" {
+    User types i1 with given HelpOption, argumentsComplete true
+    Ugoke answers i1
+    then i1 is Answered
+  }
+  scenario AC-CLI-006 "引数が足りないコマンドは 1 で終わる" {
+    User types i1 with given KnownCommand, argumentsComplete false
+    Ugoke refuses i1 with helpShown false
+    then i1 is Errored
+  }
+
+  forbidden FB-CLI-001 "引数が足りないコマンドを実行しない" {
+    User types i1 with given KnownCommand, argumentsComplete false
+    Ugoke delegates i1
+    then rejected
+  }
+  forbidden FB-CLI-002 "知らないコマンドを、成功にしない" {
+    User types i1 with given UnknownCommand, argumentsComplete true
+    Ugoke answers i1
+    then rejected
+  }
+  forbidden FB-CLI-003 "--help を、エラーにしない" {
+    User types i1 with given HelpOption, argumentsComplete true
+    Ugoke refuses i1 with helpShown false
+    then rejected
+  }
+  forbidden FB-CLI-004 "引数がそろったコマンドを、エラーにしない" {
+    User types i1 with given KnownCommand, argumentsComplete true
+    Ugoke refuses i1 with helpShown false
+    then rejected
+  }
+  forbidden FB-CLI-005 "知らないコマンドに、ヘルプを出さない" {
+    User types i1 with given UnknownCommand, argumentsComplete true
+    Ugoke refuses i1 with helpShown true
+    then rejected
+  }
+  forbidden FB-CLI-006 "コマンドを指定しないときに、ヘルプを出し忘れない" {
+    User types i1 with given NoCommand, argumentsComplete true
+    Ugoke refuses i1 with helpShown false
+    then rejected
+  }
+  forbidden FB-CLI-007 "知らないコマンドを、実行しない" {
+    User types i1 with given UnknownCommand, argumentsComplete true
+    Ugoke delegates i1
+    then rejected
+  }
+  forbidden FB-CLI-008 "打つ前に、答えない" {
+    Ugoke answers i1
+    then rejected
+  }
+  forbidden FB-CLI-009 "答えたあとに、エラーにしない" {
+    User types i1 with given VersionOption, argumentsComplete true
+    Ugoke answers i1
+    Ugoke refuses i1 with helpShown false
+    then rejected
+  }
+  forbidden FB-CLI-010 "打つ前に、コマンドを実行しない" {
+    Ugoke delegates i1
+    then rejected
+  }
+  forbidden FB-CLI-011 "打つ前に、エラーにしない" {
+    Ugoke refuses i1 with helpShown true
+    then rejected
+  }
+  forbidden FB-CLI-012 "打ったあとに、打ち直さない" {
+    User types i1 with given VersionOption, argumentsComplete true
+    User types i1 with given VersionOption, argumentsComplete true
+    then rejected
+  }
+  forbidden FB-CLI-013 "引数がそろったコマンドを、答えて終わらない" {
+    User types i1 with given KnownCommand, argumentsComplete true
+    Ugoke answers i1
+    then rejected
+  }
+}
+verify {
+  instances Invocation = 1
+}

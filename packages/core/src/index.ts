@@ -10,6 +10,7 @@ export {
   intermediateVersion,
   resolveWorkflowInput,
   validateIntermediate,
+  workflowInputDeclarationDefinitionSchema,
 } from "./intermediate/index.js";
 export type {
   AiStep,

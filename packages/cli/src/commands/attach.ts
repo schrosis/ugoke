@@ -5,20 +5,15 @@ import { createLocalScriptRunner } from "@ugoke/adapter-script-local";
 import { parseDefinition } from "@ugoke/definition";
 import { attachWorkflow, terminateWorkflow } from "@ugoke/engine";
 
-import {
-  cancelledExitCode,
-  createTerminal,
-  followRun,
-  isCancelled,
-  rootMessage,
-} from "../follow.js";
+import { cancelledExitCode } from "../exit-codes.js";
+import { createTerminal, followRun, isCancelled, rootMessage } from "../follow.js";
 import { loadEncryptionKey } from "../encryption.js";
 import { acquireRunLock, RunLockedError } from "../lock.js";
 import { chooseRun, listProjectRuns } from "../runs.js";
 import type { ProjectRun } from "../runs.js";
 import { openCommandServer } from "../daemon/connect.js";
 import type { CommandServer } from "../daemon/connect.js";
-import type { OpenedServer, ServerOptions } from "../server.js";
+import type { ServerOptions } from "../server.js";
 import { projectLockDirectory, projectLogDirectory } from "../state.js";
 import { ugokeDirectory, findProjectRoot, resolveWorkflow } from "../workflows.js";
 import type { CommandContext } from "./load.js";
@@ -67,21 +62,11 @@ export const stepOrder = async (root: string, name: string): Promise<string[] | 
   }
 };
 
-/** Finds the project root, and checks that the server keeps its runs. */
-const findRoot = async (
-  action: "cancel" | "attach",
-  { server }: AttachOptions,
-  context: CommandContext,
-): Promise<string | undefined> => {
+/** Finds the real path of the project root. */
+const findRoot = async (context: CommandContext): Promise<string | undefined> => {
   const found = await findProjectRoot(context.cwd);
   if (found === undefined) {
     context.stderr(`No ${ugokeDirectory} directory found in ${context.cwd} or its parents\n`);
-    return undefined;
-  }
-  if (server?.type === "dev" && server.dbFilename === undefined) {
-    context.stderr(
-      `ugoke ${action} needs --dev-db with --dev, because a development server without it keeps no runs\n`,
-    );
     return undefined;
   }
   return realpath(found);
@@ -141,15 +126,14 @@ const selectRun = async (
  */
 export const attach = async (options: AttachOptions, context: CommandContext): Promise<number> => {
   const { prepareEngine, signal } = options;
-  const root = await findRoot("attach", options, context);
+  const root = await findRoot(context);
   if (root === undefined) {
     return 1;
   }
   const terminal = createTerminal(context);
-  let server: OpenedServer | undefined;
   try {
-    const opened = await openCommandServer(options, root, context, signal);
-    server = opened.server;
+    const opened = await openCommandServer(options, root, context);
+    const { server } = opened;
     const selected = await selectRun(
       "attach",
       { address: server.address, root },
@@ -210,7 +194,6 @@ export const attach = async (options: AttachOptions, context: CommandContext): P
     return 1;
   } finally {
     terminal.close();
-    await server?.stop();
   }
 };
 
@@ -221,15 +204,14 @@ export const attach = async (options: AttachOptions, context: CommandContext): P
  */
 export const cancel = async (options: AttachOptions, context: CommandContext): Promise<number> => {
   const { prepareEngine, signal } = options;
-  const root = await findRoot("cancel", options, context);
+  const root = await findRoot(context);
   if (root === undefined) {
     return 1;
   }
   const terminal = createTerminal(context);
-  let server: OpenedServer | undefined;
   try {
-    const opened = await openCommandServer(options, root, context, signal);
-    server = opened.server;
+    const opened = await openCommandServer(options, root, context);
+    const { server } = opened;
     const selected = await selectRun(
       "cancel",
       { address: server.address, root },
@@ -290,6 +272,5 @@ export const cancel = async (options: AttachOptions, context: CommandContext): P
     return 1;
   } finally {
     terminal.close();
-    await server?.stop();
   }
 };

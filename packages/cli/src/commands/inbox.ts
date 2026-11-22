@@ -29,8 +29,6 @@ export interface InboxOptions {
    * resident process is used.
    */
   server?: ServerOptions | undefined;
-  /** Aborted when the user interrupts. */
-  signal: AbortSignal;
   /** Version of this ugoke, which the resident process must have to serve the project. */
   version: string;
   /** Writes JSON lines for a program such as an AI agent. */
@@ -45,6 +43,8 @@ export interface AnswerOptions extends InboxOptions {
   visit?: number | undefined;
   /** Value of `--values`: a JSON object, or the path of a `.json` file. */
   values: string;
+  /** Aborted when the user interrupts, which detaches the run that the command follows. */
+  signal: AbortSignal;
   /**
    * With `fromAi`, follows the run after the answer until its next question or its end, with a
    * Worker of this process unless the resident process runs it. Otherwise, exits after the
@@ -153,59 +153,50 @@ const listQuestions = async (options: InboxOptions, context: CommandContext): Pr
     return 1;
   }
   try {
-    const { server, servedTaskQueue } = await openCommandServer(
-      options,
-      root,
-      context,
-      options.signal,
-    );
-    try {
-      const { questions, unreadable } = await listInbox({
-        address: server.address,
-        encryptionKey: loadEncryptionKey(),
-        memo: { [projectMemoKey]: projectHash(root) },
-      });
-      if (options.fromAi === true) {
-        for (const question of questions) {
-          const { answers, options: methodOptions, run, step, visit, workflowInputs } = question;
-          const name = run.memo[workflowMemoKey];
-          writeAiLine(context.stdout, {
-            answers,
-            inDaemon: run.taskQueue === servedTaskQueue,
-            inputs: workflowInputs,
-            message: typeof methodOptions.message === "string" ? methodOptions.message : undefined,
-            name: typeof name === "string" ? name : undefined,
-            step,
-            type: "question",
-            visit,
-            workflowId: run.workflowId,
-          });
-        }
-        for (const { reason, run } of unreadable) {
-          writeAiLine(context.stdout, { reason, type: "unreadable", workflowId: run.workflowId });
-        }
-        return unreadable.length === 0 ? 0 : 1;
+    const { server, servedTaskQueue } = await openCommandServer(options, root, context);
+    const { questions, unreadable } = await listInbox({
+      address: server.address,
+      encryptionKey: loadEncryptionKey(),
+      memo: { [projectMemoKey]: projectHash(root) },
+    });
+    if (options.fromAi === true) {
+      for (const question of questions) {
+        const { answers, options: methodOptions, run, step, visit, workflowInputs } = question;
+        const name = run.memo[workflowMemoKey];
+        writeAiLine(context.stdout, {
+          answers,
+          inDaemon: run.taskQueue === servedTaskQueue,
+          inputs: workflowInputs,
+          message: typeof methodOptions.message === "string" ? methodOptions.message : undefined,
+          name: typeof name === "string" ? name : undefined,
+          step,
+          type: "question",
+          visit,
+          workflowId: run.workflowId,
+        });
       }
       for (const { reason, run } of unreadable) {
-        context.stderr(
-          `${run.workflowId}: cannot read what it waits for: ${reason}. Run "ugoke attach ${run.workflowId}${server.options}" to follow it\n`,
-        );
+        writeAiLine(context.stdout, { reason, type: "unreadable", workflowId: run.workflowId });
       }
-      if (questions.length === 0) {
-        context.stdout("No questions in this project\n");
-        return unreadable.length === 0 ? 0 : 1;
-      }
-      context.stdout(
-        questions
-          .map((question) =>
-            formatQuestion(question, { servedTaskQueue, serverOptions: server.options }),
-          )
-          .join("\n"),
-      );
       return unreadable.length === 0 ? 0 : 1;
-    } finally {
-      await server.stop();
     }
+    for (const { reason, run } of unreadable) {
+      context.stderr(
+        `${run.workflowId}: cannot read what it waits for: ${reason}. Run "ugoke attach ${run.workflowId}${server.options}" to follow it\n`,
+      );
+    }
+    if (questions.length === 0) {
+      context.stdout("No questions in this project\n");
+      return unreadable.length === 0 ? 0 : 1;
+    }
+    context.stdout(
+      questions
+        .map((question) =>
+          formatQuestion(question, { servedTaskQueue, serverOptions: server.options }),
+        )
+        .join("\n"),
+    );
+    return unreadable.length === 0 ? 0 : 1;
   } catch (error) {
     context.stderr(`${rootMessage(error)}\n`);
     return 1;
@@ -238,48 +229,39 @@ const answerQuestion = async (options: AnswerOptions, context: CommandContext): 
     return 1;
   }
   try {
-    const { server, servedTaskQueue } = await openCommandServer(
-      options,
-      root,
-      context,
-      options.signal,
+    const { server, servedTaskQueue } = await openCommandServer(options, root, context);
+    const run = (await listProjectRuns(server.address, root)).find(
+      (candidate) => candidate.workflowId === workflowId,
     );
-    try {
-      const run = (await listProjectRuns(server.address, root)).find(
-        (candidate) => candidate.workflowId === workflowId,
-      );
-      if (run === undefined) {
-        context.stderr(`No running run ${workflowId} in this project\n`);
-        return 1;
-      }
-      if (options.fromAi === true) {
-        return await answerAndFollow(
-          { ...options, values: values.values },
-          { name: run.name, root, server, servedTaskQueue, taskQueue: run.taskQueue },
-          context,
-        );
-      }
-      // The answer needs a Worker, and the run goes on after this command only in the resident
-      // process.
-      if (servedTaskQueue === undefined || run.taskQueue !== servedTaskQueue) {
-        context.stderr(
-          `${run.name}: ugoke daemon does not run ${workflowId}, so it would stop after the answer. Run "ugoke attach ${workflowId}${server.options}" to answer and follow it\n`,
-        );
-        return 1;
-      }
-      await answerInbox({
-        address: server.address,
-        encryptionKey: loadEncryptionKey(),
-        step,
-        values: values.values,
-        visit,
-        workflowId,
-      });
-      context.stdout(`${run.name}: answered ${step}. The run goes on in ugoke daemon\n`);
-      return 0;
-    } finally {
-      await server.stop();
+    if (run === undefined) {
+      context.stderr(`No running run ${workflowId} in this project\n`);
+      return 1;
     }
+    if (options.fromAi === true) {
+      return await answerAndFollow(
+        { ...options, values: values.values },
+        { name: run.name, root, server, servedTaskQueue, taskQueue: run.taskQueue },
+        context,
+      );
+    }
+    // The answer needs a Worker, and the run goes on after this command only in the resident
+    // process.
+    if (servedTaskQueue === undefined || run.taskQueue !== servedTaskQueue) {
+      context.stderr(
+        `${run.name}: ugoke daemon does not run ${workflowId}, so it would stop after the answer. Run "ugoke attach ${workflowId}${server.options}" to answer and follow it\n`,
+      );
+      return 1;
+    }
+    await answerInbox({
+      address: server.address,
+      encryptionKey: loadEncryptionKey(),
+      step,
+      values: values.values,
+      visit,
+      workflowId,
+    });
+    context.stdout(`${run.name}: answered ${step}. The run goes on in ugoke daemon\n`);
+    return 0;
   } catch (error) {
     if (error instanceof AnswerRejectedError) {
       context.stderr(`${workflowId}: ${error.message}\n`);

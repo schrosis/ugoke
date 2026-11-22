@@ -134,11 +134,14 @@ export const createProjectWorkers = ({
       const loaded = await loadConfiguredPlugins(read, root);
       // The resident process has no terminal, so only methods that answer in the Worker answer.
       const registry = createRegistry(undefined, loaded);
+      // The key is read first, because a process with a prepared engine does not exit by itself
+      // until it reaches the server.
+      const encryptionKey = loadEncryptionKey();
       prepareEngine();
       const running = await startProjectWorker({
         address: serverAddress,
         aiRunner: createAiRunner({ cwd: root, plugins: registry }),
-        encryptionKey: loadEncryptionKey(),
+        encryptionKey,
         eventLog: createFileEventLog({ directory: projectLogDirectory(root) }),
         log: (message) => log(`${root}: ${message}`),
         onError: (error) => {

@@ -18,7 +18,7 @@ export class DaemonUnavailableError extends Error {
     super(
       detach
         ? `ugoke daemon ${reason}, and --detach needs it to run the steps. Run "ugoke daemon start"`
-        : `ugoke daemon ${reason}. Run "ugoke daemon start", choose a server with --dev or --address, or set temporal.address in .ugoke/config.yaml`,
+        : `ugoke daemon ${reason}. Run "ugoke daemon start", choose a server with --address, or set temporal.address in .ugoke/config.yaml`,
     );
     this.name = "DaemonUnavailableError";
   }
@@ -58,7 +58,7 @@ const otherVersion = (
 
 /** The Temporal Server of the resident process, for a command. */
 export interface DaemonConnection {
-  /** Temporal Server of the resident process. The command does not stop it. */
+  /** Temporal Server of the resident process. */
   server: OpenedServer;
   /**
    * Project that the resident process serves, or `undefined` when the resident process has
@@ -120,10 +120,8 @@ export const connectDaemon = async (
   }
   const server: OpenedServer = {
     address: status.address,
-    durable: true,
     // Later commands find the resident process again by themselves.
     options: "",
-    stop: async () => {},
   };
   if (status.version !== version || status.workflowCodeVersion !== workflowCodeVersion) {
     const pollingTaskQueue = pollingQueue(status, root, status.address);
@@ -216,14 +214,13 @@ export const openCommandServer = async (
   { detach, server, version }: { server?: ServerOptions | undefined; version: string } & DaemonUse,
   root: string,
   context: CommandContext,
-  signal: AbortSignal,
 ): Promise<CommandServer> => {
   if (server !== undefined) {
-    return { server: await openServer(server, context, signal) };
+    return { server: openServer(server) };
   }
   const address = (await loadProjectConfig(root, context.cwd)).temporal?.address;
   if (address !== undefined) {
-    const opened = await openServer({ address, type: "address" }, context, signal);
+    const opened = openServer({ address, type: "address" });
     const queues = await daemonOn(address, root, version, context, { detach });
     return {
       pollingTaskQueue: queues.pollingTaskQueue,

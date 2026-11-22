@@ -1,0 +1,205 @@
+fsl 5
+// Requirements for a wait step: its method and with in the definition, and how it waits for an
+// answer, asks again, and ends.
+// Source: docs/reference/workflow-definition.md ("wait ステップ"), docs/guide/workflow-definition.md
+//         ("人の判断を待つ")
+//
+// MODEL-WAI-001: one value is asked. Whether it is required and has a default is given when the
+//                step is written. The references of with and outputs are in step-references.fsl.
+// MODEL-WAI-002: whether an answer fits the declaration, and whether it gives the value, are given
+//                when it is answered. An answer that does not fit is asked again.
+// MODEL-WAI-003: a step without schema asks for no value and waits for Enter, which is an answer
+//                that always fits. A wait has no time limit, so no event ends it by time.
+// MODEL-WAI-004: how the terminal method asks for each value, with interactive prompts or line by
+//                line, is in terminal-prompt.fsl.
+// MODEL-WAI-005: a method that answers in the Worker, which no follower asks, is in
+//                worker-wait.fsl.
+// MODEL-WAI-006: a method that a follower runs, such as terminal, also receives when the step
+//                started to wait (worker-wait.fsl). A run that does not report it, or reports a
+//                time that is not a date, falls back to when the follower first asks, which stays
+//                the same while it asks again.
+requirements WaitStep {
+  enum Source { NoSource, Given, Default, Null }
+  actor Author, Worker, User
+
+  entity Wait {
+    methodKnown: Bool = false
+    withOk: Bool = false
+    required: Bool = false
+    hasDefault: Bool = false
+    fits: Bool = false
+    given: Bool = false
+    source: Source = NoSource
+    lifecycle Unwritten -> Written -> Accepted -> Waiting -> Answered
+    lifecycle Written -> Invalid
+    lifecycle Waiting -> Waiting
+    lifecycle Waiting -> InputEnded
+    lifecycle Waiting -> Cancelled
+  }
+
+  def answerOk(r: Bool, f: Bool, g: Bool) = f and (g or not r)
+  def sourceOf(g: Bool, h: Bool) = if g then Given else if h then Default else Null
+
+  event write = Author writes Wait with methodKnown, withOk, required, hasDefault (Unwritten -> Written)
+    covers REQ-WAI-001 "wait ステップは、人の答えを待つ"
+  event accept = Worker accepts Wait (Written -> Accepted)
+  event reject = Worker rejects Wait (Written -> Invalid)
+  event wait = Worker waits Wait (Accepted -> Waiting)
+    covers REQ-WAI-001 "wait ステップは、人の答えを待つ"
+  event retry = User retries Wait with fits, given (Waiting -> Waiting)
+    covers REQ-WAI-003 "宣言に合わない答えは受け付けず、もう一度聞く"
+  event answer = User answers Wait with fits, given, source (Waiting -> Answered)
+  event endInput = User ends Wait (Waiting -> InputEnded)
+    covers REQ-WAI-005 "terminal で答える前にターミナルの入力が終わると、ワークフローは失敗する"
+  event cancel = User cancels Wait (Waiting -> Cancelled)
+    covers REQ-WAI-006 "待っているあいだに取り消すと、ステップは取り消しで終わる"
+
+  rule REQ-WAI-002 "method は使える待ち方でなければならず、with は待ち方に合わなければならない" {
+    allow Worker accepts Wait only when methodKnown and withOk
+    allow Worker rejects Wait only when not (methodKnown and withOk)
+    AcceptedIsOk: always Wait in Accepted has methodKnown and withOk
+    InvalidBreaksARule: always Wait in Invalid has not (methodKnown and withOk)
+  }
+  rule REQ-WAI-003 "宣言に合わない答えは受け付けず、もう一度聞く" {
+    allow User retries Wait only when not answerOk(required, input fits, input given)
+    allow User answers Wait only when answerOk(required, input fits, input given)
+    AnsweredFits: always Wait in Answered has answerOk(required, fits, given)
+  }
+  rule REQ-WAI-004 "必須でない値を答えなかったときは default を使う。default もなければ null" {
+    allow User answers Wait only when input source == sourceOf(input given, hasDefault)
+    SourceFollowsAnswer: always Wait in Answered has source == sourceOf(given, hasDefault)
+  }
+
+  scenario AC-WAI-001 "宣言に合う答えで、次に進む" {
+    Author writes w1 with methodKnown true, withOk true, required true, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User answers w1 with fits true, given true, source Given
+    then w1 is Answered
+  }
+  scenario AC-WAI-002 "合わない答えのあとに、もう一度聞いて受け付ける" {
+    Author writes w1 with methodKnown true, withOk true, required true, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User retries w1 with fits false, given true
+    User answers w1 with fits true, given true, source Given
+    then w1 is Answered
+  }
+  scenario AC-WAI-003 "答えなかった値は、default を使う" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault true
+    Worker accepts w1
+    Worker waits w1
+    User answers w1 with fits true, given false, source Default
+    then w1 is Answered
+  }
+  scenario AC-WAI-004 "default もなければ、null にする" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User answers w1 with fits true, given false, source Null
+    then w1 is Answered
+  }
+  scenario AC-WAI-005 "使えない待ち方は、定義のエラーになる" {
+    Author writes w1 with methodKnown false, withOk true, required false, hasDefault false
+    Worker rejects w1
+    then w1 is Invalid
+  }
+  scenario AC-WAI-006 "答える前に入力が終わる" {
+    Author writes w1 with methodKnown true, withOk true, required true, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User ends w1
+    then w1 is InputEnded
+  }
+  scenario AC-WAI-007 "待っているあいだに取り消す" {
+    Author writes w1 with methodKnown true, withOk true, required true, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User cancels w1
+    then w1 is Cancelled
+  }
+
+  forbidden FB-WAI-001 "合わない答えを、受け付けない" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User answers w1 with fits false, given true, source Given
+    then rejected
+  }
+  forbidden FB-WAI-002 "必須の値なしで、受け付けない" {
+    Author writes w1 with methodKnown true, withOk true, required true, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User answers w1 with fits true, given false, source Null
+    then rejected
+  }
+  forbidden FB-WAI-003 "合う答えを、聞き直さない" {
+    Author writes w1 with methodKnown true, withOk true, required true, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User retries w1 with fits true, given true
+    then rejected
+  }
+  forbidden FB-WAI-004 "with が合わない定義を、受け付けない" {
+    Author writes w1 with methodKnown true, withOk false, required false, hasDefault false
+    Worker accepts w1
+    then rejected
+  }
+  forbidden FB-WAI-005 "正しい定義を、エラーにしない" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault false
+    Worker rejects w1
+    then rejected
+  }
+  forbidden FB-WAI-006 "定義のエラーがあるステップで、待たない" {
+    Author writes w1 with methodKnown false, withOk true, required false, hasDefault false
+    Worker waits w1
+    then rejected
+  }
+  forbidden FB-WAI-007 "default があるのに、null にしない" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault true
+    Worker accepts w1
+    Worker waits w1
+    User answers w1 with fits true, given false, source Null
+    then rejected
+  }
+  forbidden FB-WAI-008 "答えた値があるのに、default を使わない" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault true
+    Worker accepts w1
+    Worker waits w1
+    User answers w1 with fits true, given true, source Default
+    then rejected
+  }
+  forbidden FB-WAI-009 "待つ前に、答えを受け付けない" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault false
+    Worker accepts w1
+    User answers w1 with fits true, given true, source Given
+    then rejected
+  }
+  forbidden FB-WAI-010 "答えたあとに、また答えを受け付けない" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User answers w1 with fits true, given true, source Given
+    User answers w1 with fits true, given true, source Given
+    then rejected
+  }
+  forbidden FB-WAI-011 "入力が終わったあとに、答えを受け付けない" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User ends w1
+    User answers w1 with fits true, given true, source Given
+    then rejected
+  }
+  forbidden FB-WAI-012 "取り消したあとに、答えを受け付けない" {
+    Author writes w1 with methodKnown true, withOk true, required false, hasDefault false
+    Worker accepts w1
+    Worker waits w1
+    User cancels w1
+    User answers w1 with fits true, given true, source Given
+    then rejected
+  }
+}
+verify {
+  instances Wait = 1
+}

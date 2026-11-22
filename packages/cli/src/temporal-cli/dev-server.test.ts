@@ -44,33 +44,31 @@ describe("startDevServer", () => {
   });
 
   it("starts a server that accepts connections and stops it", async () => {
-    const server = await startDevServer({ executable });
+    const server = await startDevServer({ dbFilename: join(root, "start.db"), executable });
 
     expect(server.address).toMatch(/^127\.0\.0\.1:\d+$/u);
-    // The Web UI is off by default.
-    expect(server.uiUrl).toBeUndefined();
     await expect(canConnect(server.address)).resolves.toBe(true);
 
     await server.stop();
     await expect(canConnect(server.address)).resolves.toBe(false);
   }, 60_000);
 
-  it("starts the Web UI when asked", async () => {
-    const server = await startDevServer({ executable, ui: true });
-    try {
-      expect(server.uiUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
-      const response = await fetch(server.uiUrl ?? "");
-      expect(response.ok).toBe(true);
-    } finally {
-      await server.stop();
-    }
-  }, 60_000);
+  it("does not start the Web UI, which a web page could use to start a run", () => {
+    const args = devServerArguments({ dbFilename: "temporal.db", httpPort: 7243, port: 7233 });
+
+    expect(args).toContain("--headless");
+    expect(args).not.toContain("--ui-port");
+  });
 
   it("turns off the HTTP API, which a web page could use to start a run", async () => {
     const [port, httpPort] = await Promise.all([freePort(), freePort()]);
-    const child = spawn(executable, devServerArguments({ httpPort, port, ui: false, uiPort: 0 }), {
-      stdio: "ignore",
-    });
+    const child = spawn(
+      executable,
+      devServerArguments({ dbFilename: join(root, "http.db"), httpPort, port }),
+      {
+        stdio: "ignore",
+      },
+    );
     try {
       const url = `http://127.0.0.1:${httpPort}/api/v1/namespaces/default/workflows/probe`;
       let response: Response | undefined;
@@ -109,9 +107,9 @@ describe("startDevServer", () => {
       { mode: 0o755 },
     );
 
-    await expect(startDevServer({ executable: failing })).rejects.toThrow(
-      "Temporal dev server exited with code 3:\nunknown flag",
-    );
+    await expect(
+      startDevServer({ dbFilename: join(root, "failing.db"), executable: failing }),
+    ).rejects.toThrow("Temporal dev server exited with code 3:\nunknown flag");
     expect(readFileSync(attempts, "utf8")).toBe("attempt\nattempt\n");
   });
 
@@ -129,15 +127,19 @@ describe("startDevServer", () => {
     }, 50);
 
     await expect(
-      startDevServer({ executable: hanging, signal: controller.signal }),
+      startDevServer({
+        dbFilename: join(root, "hanging.db"),
+        executable: hanging,
+        signal: controller.signal,
+      }),
     ).rejects.toMatchObject({ name: "AbortError" });
     const pid = Number(readFileSync(pidFile, "utf8"));
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
   it("reports a missing executable", async () => {
-    await expect(startDevServer({ executable: join(root, "missing") })).rejects.toThrow(
-      "Failed to start the Temporal CLI",
-    );
+    await expect(
+      startDevServer({ dbFilename: join(root, "missing.db"), executable: join(root, "missing") }),
+    ).rejects.toThrow("Failed to start the Temporal CLI");
   });
 });

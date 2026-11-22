@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -11,7 +11,8 @@ import { workflowCodeVersion } from "@ugoke/engine";
 import type { CommandContext } from "../commands/load.js";
 import { acquireRunLock, RunLockedError } from "../lock.js";
 import { openServer } from "../server.js";
-import type { OpenedServer, ServerOptions } from "../server.js";
+import type { ServerOptions } from "../server.js";
+import { ensureTemporalCli, startDevServer } from "../temporal-cli/index.js";
 import { getDaemonStatus } from "./client.js";
 import type { DaemonStatus } from "./client.js";
 import { checkSocketPath, daemonPaths } from "./paths.js";
@@ -20,8 +21,11 @@ import type { ProjectWorkers } from "./workers.js";
 
 /** Options of {@link runDaemon}. */
 export interface RunDaemonOptions {
-  /** Temporal Server that the resident process uses. It must keep its runs. */
-  server: ServerOptions;
+  /**
+   * Temporal Server that the resident process uses. Without it, the resident process starts a
+   * development server, which keeps its runs in the state directory.
+   */
+  server?: ServerOptions | undefined;
   /** Version of the ugoke that runs the resident process. */
   version: string;
   /** Stops the resident process when aborted, such as on SIGTERM. */
@@ -98,6 +102,56 @@ const log = (context: CommandContext, message: string): void => {
   context.stderr(`${new Date().toISOString()} ${message}\n`);
 };
 
+/** The Temporal Server that the resident process uses. */
+interface ResidentServer {
+  address: string;
+  /** Options that reach the same server again, which `ugoke daemon start` compares. */
+  options: string;
+  /** Process ID of the development server that the resident process started, if any. */
+  pid?: number;
+  /** Stops the server when the resident process started it. */
+  stop: () => Promise<void>;
+}
+
+/**
+ * Lets only the owner read the SQLite file of the development server, which holds the history of
+ * its runs.
+ *
+ * The file cannot be created in advance, because the server creates its tables only in a new
+ * file.
+ */
+const protectDb = (dbFilename: string): void => {
+  if (existsSync(dbFilename)) {
+    chmodSync(dbFilename, 0o600);
+  }
+};
+
+/**
+ * Connects to the Temporal Server of the options, or starts a development server that keeps its
+ * runs in a SQLite file.
+ *
+ * @throws When the development server cannot start, or when the signal is aborted first.
+ */
+const openResidentServer = async (
+  server: ServerOptions | undefined,
+  dbFilename: string,
+  context: CommandContext,
+  signal: AbortSignal,
+): Promise<ResidentServer> => {
+  if (server !== undefined) {
+    return { ...openServer(server), stop: async () => {} };
+  }
+  const executable = await ensureTemporalCli({
+    onDownload: (version) => log(context, `ugoke daemon: downloading Temporal CLI ${version}`),
+    signal,
+  });
+  protectDb(dbFilename);
+  const devServer = await startDevServer({ dbFilename, executable, signal });
+  // The server creates a new file with the default permissions.
+  protectDb(dbFilename);
+  return { address: devServer.address, options: "", pid: devServer.pid, stop: devServer.stop };
+};
+
 /**
  * Runs the resident process of this host in the foreground until it is stopped.
  *
@@ -124,7 +178,7 @@ export const runDaemon = async (
     throw error;
   }
 
-  let opened: OpenedServer | undefined;
+  let opened: ResidentServer | undefined;
   let workers: ProjectWorkers | undefined;
   const http = createServer();
   try {
@@ -135,10 +189,7 @@ export const runDaemon = async (
     // A resident process that was killed could not stop its development server, which would
     // share the SQLite file with the new one.
     await stopLeftoverDevServer(paths.devServer, context);
-    opened = await openServer(server, context, signal);
-    if (!opened.durable) {
-      throw new Error("ugoke daemon needs a Temporal Server that keeps its runs");
-    }
+    opened = await openResidentServer(server, paths.devDb, context, signal);
     if (opened.pid !== undefined) {
       writeFileSync(paths.devServer, `${opened.pid}\n`, { mode: 0o600 });
     }
@@ -164,7 +215,6 @@ export const runDaemon = async (
       startedAt,
       version,
       workflowCodeVersion,
-      ...(opened?.uiUrl === undefined ? {} : { uiUrl: opened.uiUrl }),
     });
     http.on("request", (incoming: IncomingMessage, response: ServerResponse) => {
       if (incoming.method === "GET" && incoming.url === "/status") {

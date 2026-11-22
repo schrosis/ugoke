@@ -7,10 +7,11 @@ export interface DaemonStatus {
   pid: number;
   /** Address of the Temporal Server that the resident process uses. */
   address: string;
-  /** Options that reach the same Temporal Server again, such as ` --dev --dev-db state.db`. */
+  /**
+   * Options that reach the same Temporal Server again, such as ` --address localhost:7233`. It is
+   * empty for the development server of the resident process.
+   */
   serverOptions: string;
-  /** URL of the Web UI of the development server, when --dev-ui started it. */
-  uiUrl?: string | undefined;
   /** Version of the ugoke that runs the resident process. */
   version: string;
   /** Workflow code version of the resident process. */

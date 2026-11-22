@@ -38,7 +38,7 @@ describe("parseDotenv", () => {
     ["whitespace after a closing quote", 'A="x" \t\n', { A: "x" }],
     ["single quotes over lines", "A='a\nb'\nB=c\n", { A: "a\nb", B: "c" }],
     ["double quotes over lines", 'A="a\n\nb"\nB=c\n', { A: "a\n\nb", B: "c" }],
-    ["a variable", 'A=$HOME\nB=${HOME}\nC="$HOME"\n', { A: "$HOME", B: "${HOME}", C: "$HOME" }],
+    ["a variable in single quotes", "A='$HOME ${HOME}'\n", { A: "$HOME ${HOME}" }],
     ["no line break at the end", "A=1", { A: "1" }],
   ])("reads %s", (_, text, values) => {
     expect(parseDotenv(text)).toEqual({ ok: true, values });
@@ -58,7 +58,6 @@ describe("parseDotenv", () => {
     'A="a\\nb\\nc"\nB="\\n"\nC=""\nD=" a "\nE="it\'s #1"\n',
     'A=\'x\' # note\nB="x"# note\nC="x" \t\n',
     "A='a\nb'\nB=\"c\n\nd\"\nE=f\n",
-    "A=$HOME\nB=${HOME}\n",
     "A=café 日本語\n",
     "__proto__=x\n",
   ])("reads %j as util.parseEnv does", (text) => {
@@ -127,7 +126,7 @@ describe("parseDotenv", () => {
         {
           line: 4,
           message:
-            'Only \\n can follow \\ in double quotes. Use single quotes for a value with \\ or "',
+            'Only \\n and \\$ can follow \\ in double quotes. Use single quotes for a value with \\ or "',
         },
       ],
     ],
@@ -186,7 +185,7 @@ describe("parseDotenv", () => {
         {
           line: 2,
           message:
-            'Only \\n can follow \\ in double quotes. Use single quotes for a value with \\ or "',
+            'Only \\n and \\$ can follow \\ in double quotes. Use single quotes for a value with \\ or "',
         },
         { line: 3, message: "Unexpected text after the closing quote" },
       ],
@@ -200,7 +199,7 @@ describe("parseDotenv", () => {
         {
           line: 1,
           message:
-            'Only \\n can follow \\ in double quotes. Use single quotes for a value with \\ or "',
+            'Only \\n and \\$ can follow \\ in double quotes. Use single quotes for a value with \\ or "',
         },
       ],
       ok: false,
@@ -256,6 +255,70 @@ describe("parseDotenv", () => {
   });
 });
 
+describe("parseDotenv variables", () => {
+  const inherited = { HOME: "/home/me", EMPTY: "", USER: "me" };
+
+  it.each([
+    ["$NAME unquoted", "A=$HOME/bin\n", { A: "/home/me/bin" }],
+    ["${NAME} unquoted", "A=${HOME}bin\n", { A: "/home/mebin" }],
+    ["$NAME in double quotes", 'A="$HOME and ${USER}"\n', { A: "/home/me and me" }],
+    ["an earlier line", "B=/srv\nA=${B}/app\n", { A: "/srv/app", B: "/srv" }],
+    [
+      "the environment over an earlier line",
+      "HOME=/srv\nA=$HOME\n",
+      { A: "/home/me", HOME: "/srv" },
+    ],
+    ["the environment for the name itself", "HOME=$HOME/x\n", { HOME: "/home/me/x" }],
+    ["an empty variable", "A=[$EMPTY]\n", { A: "[]" }],
+    ["a $ that a name does not follow", "A=$5 and a$\n", { A: "$5 and a$" }],
+    ["\\$ in double quotes", 'A="\\$HOME"\n', { A: "$HOME" }],
+    ["a value that a variable gives as it is", "B='$USER'\nA=$B\n", { A: "$USER", B: "$USER" }],
+    ["a variable on a later line of a value", 'A="first\n$USER"\n', { A: "first\nme" }],
+  ])("expands %s", (_, text, values) => {
+    expect(parseDotenv(text, inherited)).toEqual({ ok: true, values });
+  });
+
+  const unset =
+    "A variable in the value is set neither on an earlier line nor in the environment. Use single quotes for a $ as it is";
+  const reference =
+    "Write a variable as $NAME or ${NAME}. Use single quotes, or \\$ in double quotes, for a $ as it is";
+
+  it.each([
+    ["a variable that is set nowhere", "A=1\nB=$NOPE\n", [{ line: 2, message: unset }]],
+    ["a later line", "A=$B\nB=1\n", [{ line: 1, message: unset }]],
+    [
+      "a variable in double quotes on a later line",
+      'A="x\n${NOPE}"\n',
+      [{ line: 2, message: unset }],
+    ],
+    ["an unclosed brace", "A=${HOME\n", [{ line: 1, message: reference }]],
+    ["a brace without a name", "A=${}\n", [{ line: 1, message: reference }]],
+    ["a brace with a bad name", 'A="${1A}"\n', [{ line: 1, message: reference }]],
+  ])("reports %s", (_, text, errors) => {
+    expect(parseDotenv(text, inherited)).toEqual({ errors, ok: false });
+  });
+
+  it("expands with a variable that the environment overrides, as the step sees it", () => {
+    expect(parseDotenv("BASE=/srv/app\nLOG_DIR=${BASE}/logs\n", { BASE: "/ci" })).toEqual({
+      ok: true,
+      values: { BASE: "/srv/app", LOG_DIR: "/ci/logs" },
+    });
+  });
+
+  it("does not read a name that objects inherit from the environment", () => {
+    expect(parseDotenv("A=$constructor\n", {})).toEqual({
+      errors: [{ line: 1, message: unset }],
+      ok: false,
+    });
+  });
+
+  it("names neither the variable nor the value in a message", () => {
+    const result = parseDotenv("A=$SECRET_NAME\n", {});
+
+    expect(JSON.stringify(result)).not.toMatch(/SECRET_NAME/u);
+  });
+});
+
 describe("readDotenv", () => {
   let cwd: string;
 
@@ -271,6 +334,15 @@ describe("readDotenv", () => {
     writeFileSync(join(cwd, ".env"), "NAME=value\n");
 
     expect(readDotenv(cwd, ".env")).toEqual({ ok: true, values: { NAME: "value" } });
+  });
+
+  it("expands variables with the environment that it is given", () => {
+    writeFileSync(join(cwd, ".env"), "A=$GREETING/x\n");
+
+    expect(readDotenv(cwd, ".env", { GREETING: "hi" })).toEqual({
+      ok: true,
+      values: { A: "hi/x" },
+    });
   });
 
   it("reports every malformed line of the file", () => {

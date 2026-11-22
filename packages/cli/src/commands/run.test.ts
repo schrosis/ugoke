@@ -7,7 +7,6 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 
 import { createOutput, fixtureProject } from "../testing.ts";
-import { fromAiNeedsDurableServer } from "../follow.ts";
 import { run } from "./run.ts";
 
 describe("run", () => {
@@ -227,38 +226,6 @@ describe("run", () => {
       ].join("\n"),
     );
   }, 60_000);
-
-  it("fails --from-ai on a development server without --dev-db before it starts the server", async () => {
-    const output = createOutput();
-    let prepared = false;
-    const exitCode = await run(
-      "run-success",
-      {
-        fromAi: true,
-        prepareEngine: () => {
-          prepared = true;
-        },
-        // Starting the server would fail with another message.
-        server: { temporalBin: join(tmpdir(), "ugoke-no-such-temporal"), type: "dev" },
-        signal: new AbortController().signal,
-        version: "0.0.0",
-      },
-      {
-        cwd: fixtureProject,
-        stderr: output.stderr,
-        stdin: () => Readable.from([]),
-        stdout: output.stdout,
-      },
-    );
-
-    expect(exitCode).toBe(1);
-    expect(output.written.stderr).toBe("");
-    expect(JSON.parse(output.written.stdout)).toEqual({
-      message: fromAiNeedsDurableServer,
-      type: "failed",
-    });
-    expect(prepared).toBe(false);
-  });
 
   it("does not start an invalid workflow", async () => {
     await expect(execute("transition-error")).resolves.toMatchObject({ exitCode: 1, stdout: "" });

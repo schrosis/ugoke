@@ -4,9 +4,10 @@ import { basename, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { afterEach, beforeEach, describe, expect, inject, it } from "vitest";
 
-import { fixtureProject } from "../testing.ts";
+import { fixtureProject, seedTemporalCli } from "../testing.ts";
 
 // These tests run the built executable, so they depend on `pnpm build`.
 const bin = fileURLToPath(new URL("../../dist/bin.js", import.meta.url));
@@ -17,10 +18,14 @@ describe("ugoke daemon", () => {
   beforeEach(() => {
     // A short directory keeps the socket path within the limit of the platform.
     state = mkdtempSync("/tmp/ugoke-daemon-");
+    seedTemporalCli(cacheHome(), inject("temporalCli"));
   });
 
-  /** SQLite file that the resident process keeps its runs in by default. */
-  const defaultDb = (): string => join(state, "ugoke", "temporal.db");
+  /** Directory that the tests pass as XDG_CACHE_HOME, which keeps the Temporal CLI. */
+  const cacheHome = (): string => join(state, "cache");
+
+  /** SQLite file that the development server of the resident process keeps its runs in. */
+  const devDb = (): string => join(state, "ugoke", "temporal.db");
 
   /**
    * Pattern of the command line of the development server of the test.
@@ -76,7 +81,7 @@ describe("ugoke daemon", () => {
   const execute = async (args: string[]) =>
     new Promise<{ exitCode: number | null; stdout: string; stderr: string }>((resolve) => {
       const child = spawn(process.execPath, [bin, ...args], {
-        env: { ...process.env, XDG_STATE_HOME: state },
+        env: { ...process.env, XDG_CACHE_HOME: cacheHome(), XDG_STATE_HOME: state },
       });
       let stdout = "";
       let stderr = "";
@@ -89,7 +94,10 @@ describe("ugoke daemon", () => {
       child.on("exit", (exitCode) => resolve({ exitCode, stderr, stdout }));
     });
 
-  const start = async () => execute(["daemon", "start", "--temporal-bin", inject("temporalCli")]);
+  const start = async () => execute(["daemon", "start"]);
+
+  const daemonLog = (): string =>
+    readFileSync(join(state, "ugoke", "daemon", "daemon.log"), "utf8");
 
   it("starts, reports, and stops the resident process", async () => {
     await expect(execute(["daemon", "status"])).resolves.toMatchObject({
@@ -104,9 +112,13 @@ describe("ugoke daemon", () => {
     );
     // The development server keeps its runs in the state directory, which only the owner reads.
     expect(devServers()).toHaveLength(1);
-    expect(statSync(defaultDb()).mode & 0o777).toBe(0o600);
+    expect(statSync(devDb()).mode & 0o777).toBe(0o600);
+    // The Temporal CLI in the cache is used without a download.
+    expect(daemonLog()).not.toContain("downloading Temporal CLI");
+    // The same request needs no restart.
     await expect(start()).resolves.toMatchObject({
       exitCode: 0,
+      stderr: "",
       stdout: expect.stringMatching(/^ugoke daemon: already running \(pid \d+/u) as unknown,
     });
 
@@ -116,8 +128,6 @@ describe("ugoke daemon", () => {
     expect(status.stdout).toContain(
       `log: ${join(realpathSync(state), "ugoke", "daemon", "daemon.log")}\n`,
     );
-    // The Web UI starts only with --dev-ui.
-    expect(status.stdout).not.toContain("web ui:");
 
     await expect(execute(["daemon", "stop"])).resolves.toEqual({
       exitCode: 0,
@@ -141,9 +151,7 @@ describe("ugoke daemon", () => {
     // The new process stopped the development server of the killed one, which used the same
     // SQLite file.
     expect(devServers()).toHaveLength(1);
-    expect(readFileSync(join(state, "ugoke", "daemon", "daemon.log"), "utf8")).toContain(
-      "stopping the development server that was left running",
-    );
+    expect(daemonLog()).toContain("stopping the development server that was left running");
   }, 60_000);
 
   it("runs the steps of a run that ugoke run detached", async () => {
@@ -151,7 +159,7 @@ describe("ugoke daemon", () => {
     const run = await new Promise<{ exitCode: number | null; output: string }>((resolve) => {
       const child = spawn(process.execPath, [bin, "run", "run-detach"], {
         cwd: fixtureProject,
-        env: { ...process.env, XDG_STATE_HOME: state },
+        env: { ...process.env, XDG_CACHE_HOME: cacheHome(), XDG_STATE_HOME: state },
       });
       let output = "";
       let interrupted = false;
@@ -192,58 +200,42 @@ describe("ugoke daemon", () => {
 
     expect(again).toMatchObject({ exitCode: 0 });
     expect(again.stderr).toMatch(
-      /^ugoke daemon: it uses the server options "--dev --dev-db \S+ --temporal-bin \S+"\. Run "ugoke daemon stop" and start it again to change it\n$/u,
+      /^ugoke daemon: it uses its own development server\. Run "ugoke daemon stop" and start it again to change it\n$/u,
     );
   }, 60_000);
 
-  it("warns only when the running process uses other options, including --dev-ui", async () => {
-    const options = [
-      "daemon",
-      "start",
-      // A path that needs quotes on a command line.
-      "--dev-db",
-      join(state, "temporal db.sqlite"),
-      "--temporal-bin",
-      inject("temporalCli"),
-    ];
-    await execute(options);
-
-    await expect(execute(options)).resolves.toMatchObject({ exitCode: 0, stderr: "" });
-    await execute(["daemon", "stop"]);
-
-    // --dev-ui reaches the resident process, and is compared with the request.
-    await execute([...options, "--dev-ui"]);
-    await expect(execute([...options, "--dev-ui"])).resolves.toMatchObject({
-      exitCode: 0,
-      stderr: "",
+  it("uses the Temporal Server of --address without a Temporal CLI", async () => {
+    const environment = await TestWorkflowEnvironment.createLocal({
+      server: { executable: { path: inject("temporalCli"), type: "existing-path" } },
     });
-    const status = await execute(["daemon", "status"]);
-    expect(status.stdout).toMatch(/^web ui: http:\/\/127\.0\.0\.1:\d+$/mu);
-    await expect(execute(options)).resolves.toMatchObject({
-      stderr: expect.stringContaining('--dev-ui". Run "ugoke daemon stop"') as unknown,
-    });
-    await execute(["daemon", "stop"]);
     try {
-      execFileSync("pkill", ["-f", "--", `--db-filename ${join(state, "temporal db.sqlite")}`]);
-    } catch {
-      // No process was left.
+      // Without a development server, the resident process needs no Temporal CLI.
+      rmSync(cacheHome(), { force: true, recursive: true });
+      const options = ["daemon", "start", "--address", environment.address];
+
+      const started = await execute(options);
+
+      expect(started).toMatchObject({ exitCode: 0 });
+      expect(started.stdout).toContain(`server ${environment.address}, `);
+      expect(devServers()).toHaveLength(0);
+      expect(daemonLog()).not.toContain("downloading Temporal CLI");
+      await expect(execute(options)).resolves.toMatchObject({ exitCode: 0, stderr: "" });
+      await expect(start()).resolves.toMatchObject({
+        exitCode: 0,
+        stderr: `ugoke daemon: it uses the server options "--address ${environment.address}". Run "ugoke daemon stop" and start it again to change it\n`,
+      });
+    } finally {
+      // The resident process stops its Workers before the server goes away.
+      await execute(["daemon", "stop"]);
+      await environment.teardown();
     }
   }, 60_000);
-
-  it("does not take options of a development server with --address", async () => {
-    await expect(
-      execute(["daemon", "start", "--address", "localhost:7233", "--dev-db", "state.db"]),
-    ).resolves.toMatchObject({
-      exitCode: 1,
-      stderr: expect.stringContaining("cannot be used with") as unknown,
-    });
-  });
 
   it("tells how to choose a server when no resident process runs", async () => {
     const run = await new Promise<{ exitCode: number | null; output: string }>((resolve) => {
       const child = spawn(process.execPath, [bin, "run", "run-success"], {
         cwd: fixtureProject,
-        env: { ...process.env, XDG_STATE_HOME: state },
+        env: { ...process.env, XDG_CACHE_HOME: cacheHome(), XDG_STATE_HOME: state },
       });
       let output = "";
       child.stdout.on("data", (chunk: Buffer) => {
@@ -258,7 +250,7 @@ describe("ugoke daemon", () => {
     expect(run).toEqual({
       exitCode: 1,
       output:
-        'run-success: failed: ugoke daemon is not running. Run "ugoke daemon start", choose a server with --dev or --address, or set temporal.address in .ugoke/config.yaml\n',
+        'run-success: failed: ugoke daemon is not running. Run "ugoke daemon start", choose a server with --address, or set temporal.address in .ugoke/config.yaml\n',
     });
   });
 });

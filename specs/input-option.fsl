@@ -1,0 +1,83 @@
+fsl 5
+// Requirements for reading the --input option of ugoke run: a JSON object, or the path of a .json
+// file. workflow-input.fsl checks the values that it gives against the declaration.
+// Source: docs/reference/commands/run.md ("オプション")
+//
+// MODEL-OPT-001: the form of the option, whether the file can be read, whether the text is JSON,
+//                and whether it is an object are given when the option is given.
+requirements InputOption {
+  enum Form { NoForm, InlineJson, JsonFile, OtherForm }
+  actor User, Ugoke
+
+  entity InputText {
+    form: Form = NoForm
+    readable: Bool = false
+    parsed: Bool = false
+    isObject: Bool = false
+    lifecycle Ungiven -> Given -> Read
+    lifecycle Given -> Unread
+  }
+
+  def readOk(f: Form, rd: Bool, p: Bool, o: Bool) = (f == InlineJson or (f == JsonFile and rd)) and p and o
+
+  event give = User gives InputText with form, readable, parsed, isObject (Ungiven -> Given)
+    covers REQ-OPT-001 "--input は、{ で始まれば JSON のオブジェクト、そうでなければ今のディレクトリからの .json のファイルのパス"
+  event read = Ugoke reads InputText (Given -> Read)
+  event refuse = Ugoke refuses InputText (Given -> Unread)
+
+  rule REQ-OPT-002 "ほかのパス、読めないファイル、JSON でない値、オブジェクトでない値は、実行せずに失敗する" {
+    allow Ugoke reads InputText only when readOk(form, readable, parsed, isObject)
+    allow Ugoke refuses InputText only when not readOk(form, readable, parsed, isObject)
+    ReadIsOk: always InputText in Read has readOk(form, readable, parsed, isObject)
+    UnreadBreaksARule: always InputText in Unread has not readOk(form, readable, parsed, isObject)
+  }
+
+  scenario AC-OPT-001 "JSON のオブジェクトを読む" {
+    User gives t1 with form InlineJson, readable false, parsed true, isObject true
+    Ugoke reads t1
+    then t1 is Read
+  }
+  scenario AC-OPT-002 ".json のファイルを読む" {
+    User gives t1 with form JsonFile, readable true, parsed true, isObject true
+    Ugoke reads t1
+    then t1 is Read
+  }
+  scenario AC-OPT-003 "JSON のオブジェクトでない値は、失敗する" {
+    User gives t1 with form InlineJson, readable false, parsed true, isObject false
+    Ugoke refuses t1
+    then t1 is Unread
+  }
+
+  forbidden FB-OPT-001 "読めないファイルを、読んだことにしない" {
+    User gives t1 with form JsonFile, readable false, parsed true, isObject true
+    Ugoke reads t1
+    then rejected
+  }
+  forbidden FB-OPT-002 "JSON でない値を、読んだことにしない" {
+    User gives t1 with form InlineJson, readable false, parsed false, isObject true
+    Ugoke reads t1
+    then rejected
+  }
+  forbidden FB-OPT-003 ".json でないパスを、読まない" {
+    User gives t1 with form OtherForm, readable true, parsed true, isObject true
+    Ugoke reads t1
+    then rejected
+  }
+  forbidden FB-OPT-004 "オブジェクトでない値を、読んだことにしない" {
+    User gives t1 with form JsonFile, readable true, parsed true, isObject false
+    Ugoke reads t1
+    then rejected
+  }
+  forbidden FB-OPT-005 "正しく読めた .json のファイルを、拒まない" {
+    User gives t1 with form JsonFile, readable true, parsed true, isObject true
+    Ugoke refuses t1
+    then rejected
+  }
+  forbidden FB-OPT-006 "渡される前に、読まない" {
+    Ugoke reads t1
+    then rejected
+  }
+}
+verify {
+  instances InputText = 1
+}

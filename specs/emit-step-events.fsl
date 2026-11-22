@@ -1,0 +1,139 @@
+fsl 5
+// Design of the progress events of a step. The activity of a script or AI step
+// (packages/engine/src/activities/index.ts) emits stepStarted, then the output of the step while
+// it runs, then one stepFinished, and the CLI shows each event as it arrives. A step with
+// continueOnError that fails returns its failure as its result, and its stepFinished says that
+// the run goes on (continue-on-error.fsl).
+//
+// It refines the requirements of step-progress.fsl.
+spec EmitStepEvents {
+  entity StepRun
+  enum ActivityPhase { Ready, Busy, Returned, Threw }
+  enum Outcome { NoOutcome, Passed, Broke, Halted }
+  type Count = 0..2
+
+  state {
+    phase: Map<StepRun, ActivityPhase>,
+    // How the step turns out: whether its command fails or times out, and whether it is stopped
+    // from outside.
+    fails: Map<StepRun, Bool>,
+    stopped: Map<StepRun, Bool>,
+    // Whether the step has continueOnError.
+    continues: Map<StepRun, Bool>,
+    // Output that arrives after the step settled is dropped.
+    settled: Map<StepRun, Bool>,
+    finished: Map<StepRun, Count>,
+    outcome: Map<StepRun, Outcome>,
+    hasMessage: Map<StepRun, Bool>
+  }
+
+  init {
+    forall s: StepRun {
+      phase[s] = Ready
+      fails[s] = false
+      stopped[s] = false
+      continues[s] = false
+      settled[s] = false
+      finished[s] = 0
+      outcome[s] = NoOutcome
+      hasMessage[s] = false
+    }
+  }
+
+  // The activity emits stepStarted before it runs the step.
+  @requirement("REQ-PRG-001", "ステップを始めると、ステップの ID を表示する")
+  action begin(s: StepRun, f: Bool, st: Bool, c: Bool) {
+    requires phase[s] == Ready
+    phase[s] = Busy
+    fails[s] = f
+    stopped[s] = st
+    continues[s] = c
+  }
+
+  // The step writes output, which is emitted as stepOutput until the step settles.
+  @requirement("REQ-PRG-002", "ステップの出力は、始まりの行と結果の行のあいだに表示する")
+  action output(s: StepRun) {
+    requires phase[s] == Busy
+    requires not settled[s]
+    phase[s] = Busy
+  }
+
+  // Output that the step writes after it settled is not emitted.
+  @requirement("MODEL-EVT-001", "ステップが終わったあとに届いた出力は、出さない")
+  action lateOutput(s: StepRun) {
+    requires phase[s] == Returned or phase[s] == Threw
+    requires settled[s]
+    phase[s] = phase[s]
+  }
+
+  // The step succeeds: the body returns without an error.
+  @requirement("REQ-PRG-003", "成功したステップは ✓ の行で終わる")
+  action returnsOk(s: StepRun) {
+    requires phase[s] == Busy
+    requires not fails[s] and not stopped[s]
+    phase[s] = Returned
+    settled[s] = true
+    finished[s] = finished[s] + 1
+    outcome[s] = Passed
+  }
+
+  // A failing command throws. Its cancellation signal is not aborted, or is aborted for a timeout,
+  // so failureOutcome reports a failure.
+  @requirement("REQ-PRG-004", "失敗したステップは ✗ の行で終わり、理由を表示する")
+  action throwsFailure(s: StepRun) {
+    requires phase[s] == Busy
+    requires fails[s] and not stopped[s] and not continues[s]
+    phase[s] = Threw
+    settled[s] = true
+    finished[s] = finished[s] + 1
+    outcome[s] = Broke
+    hasMessage[s] = true
+  }
+
+  // A failing step with continueOnError returns its failure, and the stepFinished of a failure
+  // says that the run goes on.
+  @requirement("REQ-PRG-004", "失敗したステップは ✗ の行で終わり、理由を表示する")
+  action returnsFailure(s: StepRun) {
+    requires phase[s] == Busy
+    requires fails[s] and not stopped[s] and continues[s]
+    phase[s] = Returned
+    settled[s] = true
+    finished[s] = finished[s] + 1
+    outcome[s] = Broke
+    hasMessage[s] = true
+  }
+
+  // A step stopped from outside throws with its cancellation signal aborted for a cancel, so
+  // failureOutcome reports a cancel.
+  @requirement("REQ-PRG-005", "外から止めたステップは ■ の行で終わる")
+  action throwsCancel(s: StepRun) {
+    requires phase[s] == Busy
+    requires stopped[s]
+    phase[s] = Threw
+    settled[s] = true
+    finished[s] = finished[s] + 1
+    outcome[s] = Halted
+    hasMessage[s] = true
+  }
+
+  @requirement("MODEL-EVT-002", "ステップが終わったあとは、何も起きない")
+  action rest(s: StepRun) {
+    requires phase[s] == Returned or phase[s] == Threw
+    phase[s] = phase[s]
+  }
+
+  @requirement("MODEL-EVT-003", "stepFinished は 1 度だけ出す")
+  invariant OneFinishedEvent {
+    forall s: StepRun { finished[s] <= 1 and ((phase[s] == Returned or phase[s] == Threw) => finished[s] == 1) }
+  }
+
+  @requirement("MODEL-EVT-004", "例外を投げずに失敗で終わるのは、continueOnError のステップだけ")
+  invariant ReturnedFailureContinues {
+    forall s: StepRun { (phase[s] == Returned and outcome[s] == Broke) => continues[s] }
+  }
+
+  terminal { forall s: StepRun { phase[s] == Returned or phase[s] == Threw } }
+}
+verify {
+  instances StepRun = 1
+}

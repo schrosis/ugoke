@@ -58,8 +58,7 @@ const interruptSignal = (): AbortSignal => {
   const controller = new AbortController();
   handleInterrupt = () => {
     if (controller.signal.aborted) {
-      // A second interrupt exits immediately. process.exit() still runs the "exit" handlers,
-      // which stop a development server.
+      // A second interrupt exits immediately.
       process.exit(interruptedExitCode);
     }
     controller.abort();
@@ -143,57 +142,23 @@ const processContext = (): ProgramContext => ({
   stdout: (text) => process.stdout.write(text),
 });
 
-/** Where the resident process keeps the runs of its development server by default. */
-const defaultDevDbHelp = "temporal.db in the state directory, such as ~/.local/state/ugoke";
-
-const devDbDescription = "keep the state of the development server in a SQLite file";
-const devUiDescription =
-  "also start the Web UI, which web pages that you open could use to run commands on this machine";
-const temporalBinDescription =
-  "Temporal CLI to start the development server with, as a path or a name in PATH";
 const daemonHelp = `
-Without server options, the command uses temporal.address in .ugoke/config.yaml, or the
+Without --address, the command uses temporal.address in .ugoke/config.yaml, or the
 Temporal Server of the resident process that "ugoke daemon start" starts. When the resident
 process runs, it runs the steps on that server, so the run keeps going after this command exits.`;
 const interruptHelp = `
 Press Ctrl+C to detach: the run waits in Temporal, and "ugoke attach" continues it.
 A running script finishes first. Press Ctrl+C again to exit now, which fails the running
-step so that the run cannot be continued. A development server without --dev-db keeps no
-runs, so Ctrl+C cancels the run there. Use "ugoke cancel" to stop a run.`;
-
-const addressOption = () =>
-  new Option("--address <address>", "address of the Temporal Server").conflicts("dev");
+step so that the run cannot be continued. Use "ugoke cancel" to stop a run.`;
 
 /**
- * Builds the server options of a command, and rejects options that need --dev.
+ * Builds the server options of a command.
  *
- * @returns The server, or `undefined` when no option names one, so that the resident process
- *   serves the command.
+ * @returns The server, or `undefined` when no option names one, so that the configuration file or
+ *   the resident process gives it.
  */
-const toServerOptions = (
-  {
-    address,
-    dev,
-    devDb,
-    devUi,
-    temporalBin,
-  }: {
-    address?: string | undefined;
-    dev?: true | undefined;
-    devDb?: string | undefined;
-    devUi?: true | undefined;
-    temporalBin?: string | undefined;
-  },
-  command: { error: (message: string) => never },
-): ServerOptions | undefined => {
-  if (dev !== true && (devDb !== undefined || devUi !== undefined || temporalBin !== undefined)) {
-    command.error("error: --dev-db, --dev-ui, and --temporal-bin require --dev");
-  }
-  if (dev === true) {
-    return { dbFilename: devDb, temporalBin, type: "dev", ui: devUi };
-  }
-  return address === undefined ? undefined : { address, type: "address" };
-};
+const toServerOptions = (address: string | undefined): ServerOptions | undefined =>
+  address === undefined ? undefined : { address, type: "address" };
 
 /** Parses a whole number from 0, such as the value of `--visit` or `--tail`. */
 const parseCount = (value: string): number => {
@@ -231,13 +196,13 @@ export const createProgram = (context: ProgramContext = processContext()) => {
     .command("run")
     .description("Run a workflow in .ugoke/workflows and wait for it to finish")
     .argument("<workflow>", "workflow name, such as deploy or release/notes")
-    .addOption(addressOption())
+    .option("--address <address>", "address of the Temporal Server")
     .option("--input <json-or-file>", "workflow input as a JSON object or the path of a .json file")
     .addOption(
       new Option(
         "--detach",
         "start the run and exit. ugoke daemon runs it, and its questions wait in ugoke inbox list",
-      ).conflicts(["address", "dev"]),
+      ).conflicts("address"),
     )
     .addOption(
       new Option(
@@ -245,17 +210,13 @@ export const createProgram = (context: ProgramContext = processContext()) => {
         "write JSON lines for a program such as an AI agent, and exit at the first question, which ugoke inbox answer --from-ai answers",
       ).conflicts("detach"),
     )
-    .option("--dev", "start a temporary Temporal development server for this run")
-    .option("--dev-db <path>", devDbDescription)
-    .option("--temporal-bin <path>", temporalBinDescription)
-    .option("--dev-ui", devUiDescription)
     .addHelpText(
       "after",
       `${interruptHelp}
 ${daemonHelp}`,
     )
-    .action(async (workflow, { detach, fromAi, input, ...options }, command) => {
-      const server = toServerOptions(options, command);
+    .action(async (workflow, { address, detach, fromAi, input }) => {
+      const server = toServerOptions(address);
       const signal = context.interruptSignal();
       context.setExitCode(
         await run(
@@ -278,19 +239,15 @@ ${daemonHelp}`,
     .command("attach")
     .description("Attach to a run of the project and follow it, such as one that was detached")
     .argument("[workflow-id]", "ID of the run. Without it, the runs of the project are listed")
-    .addOption(addressOption())
-    .option("--dev", "start a Temporal development server from --dev-db")
-    .option("--dev-db <path>", devDbDescription)
-    .option("--temporal-bin <path>", temporalBinDescription)
-    .option("--dev-ui", devUiDescription)
+    .option("--address <address>", "address of the Temporal Server")
     .option("--force", "attach to a run that another version of ugoke started, which can fail")
     .addHelpText(
       "after",
       `${interruptHelp}
 ${daemonHelp}`,
     )
-    .action(async (workflowId, { force, ...options }, command) => {
-      const server = toServerOptions(options, command);
+    .action(async (workflowId, { address, force }) => {
+      const server = toServerOptions(address);
       const signal = context.interruptSignal();
       context.setExitCode(
         await attach(
@@ -311,13 +268,9 @@ ${daemonHelp}`,
     .command("cancel")
     .description("Cancel a run of the project, stopping its wait or its running script")
     .argument("[workflow-id]", "ID of the run. Without it, the runs of the project are listed")
-    .addOption(addressOption())
-    .option("--dev", "start a Temporal development server from --dev-db")
-    .option("--dev-db <path>", devDbDescription)
-    .option("--temporal-bin <path>", temporalBinDescription)
-    .option("--dev-ui", devUiDescription)
-    .action(async (workflowId, options, command) => {
-      const server = toServerOptions(options, command);
+    .option("--address <address>", "address of the Temporal Server")
+    .action(async (workflowId, { address }) => {
+      const server = toServerOptions(address);
       const signal = context.interruptSignal();
       context.setExitCode(
         await cancel(
@@ -347,8 +300,7 @@ ${daemonHelp}`,
         await listInboxCommand(
           {
             fromAi,
-            server: address === undefined ? undefined : { address, type: "address" },
-            signal: context.interruptSignal(),
+            server: toServerOptions(address),
             version,
           },
           context,
@@ -390,7 +342,7 @@ as a run that was detached from "ugoke run". To answer a run and follow it in th
           {
             fromAi,
             prepareEngine: context.prepareEngine,
-            server: address === undefined ? undefined : { address, type: "address" },
+            server: toServerOptions(address),
             signal: context.interruptSignal(),
             step,
             values,
@@ -423,7 +375,7 @@ Both the standard output and the standard error of the steps are shown on standa
           {
             follow,
             json,
-            server: address === undefined ? undefined : { address, type: "address" },
+            server: toServerOptions(address),
             signal: context.interruptSignal(),
             tail,
             version,
@@ -484,31 +436,23 @@ Run it again after changing plugins.`,
       "after",
       `
 The resident process starts a Temporal development server, which keeps its runs in
-${defaultDevDbHelp}.
+temporal.db in the state directory, such as ~/.local/state/ugoke.
 With --address, it uses that Temporal Server instead.
 
 Scripts that the resident process runs inherit its environment variables as they were when it
 started, not those of the terminal that runs "ugoke run". Pass the values that a workflow needs
 with env and dotenv in the definition.`,
     )
-    .addOption(
-      new Option(
-        "--address <address>",
-        "use the Temporal Server at this address instead of starting a development server",
-      ).conflicts(["devDb", "devUi", "temporalBin"]),
+    .option(
+      "--address <address>",
+      "use the Temporal Server at this address instead of starting a development server",
     )
-    .option("--dev-db <path>", "SQLite file that keeps the state of the development server")
-    .option("--temporal-bin <path>", temporalBinDescription)
-    .option("--dev-ui", devUiDescription)
-    .action(async ({ address, devDb, devUi, temporalBin }) => {
+    .action(async ({ address }) => {
       context.setExitCode(
         await startDaemon(
           {
             executable: context.executable ?? "ugoke",
-            server:
-              address === undefined
-                ? { dbFilename: devDb, temporalBin, type: "dev", ui: devUi }
-                : { address, type: "address" },
+            server: toServerOptions(address),
             version,
           },
           context,
@@ -533,17 +477,9 @@ with env and dotenv in the definition.`,
   // ugoke daemon start runs this command in the background.
   daemon
     .command("run", { hidden: true })
-    .addOption(addressOption())
-    .option("--dev")
-    .option("--dev-db <path>")
-    .option("--temporal-bin <path>")
-    .option("--dev-ui")
-    .action(async (options, command) => {
-      const server = toServerOptions(options, command);
-      if (server === undefined) {
-        command.error("error: ugoke daemon run needs --dev or --address");
-        return;
-      }
+    .option("--address <address>")
+    .action(async ({ address }) => {
+      const server = toServerOptions(address);
       const signal = (context.stopSignal ?? context.interruptSignal)();
       context.setExitCode(
         await runDaemon({ prepareEngine: context.prepareEngine, server, signal, version }, context),

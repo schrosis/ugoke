@@ -1,0 +1,36 @@
+fsl 5
+// refine: resolve-workflow.fsl project-files.fsl
+//
+// Going up one directory at a time finds the nearest .ugoke, as the requirements state.
+refinement ResolveWorkflowRefinesProjectFiles {
+  impl ResolveWorkflow
+  abs ProjectFiles
+
+  map command_stage[c: Command] =
+    if phase[c] == Asked then Typed
+    else if phase[c] == Started or phase[c] == Searching then Issued
+    else if phase[c] == RootFound then Located
+    else if phase[c] == FileFound then Resolved
+    else if phase[c] == NameRejected then BadName
+    else if phase[c] == NoRoot then NoProject
+    else if phase[c] == FileMissing then NoWorkflow
+    else Ambiguous
+  map command_u0[c: Command] = u0[c]
+  map command_u1[c: Command] = u1[c]
+  map command_u2[c: Command] = u2[c]
+  map command_u3[c: Command] = u3[c]
+  map command_validName[c: Command] = validName[c]
+  map command_yaml[c: Command] = yaml[c]
+  map command_yml[c: Command] = yml[c]
+  map command_root[c: Command] = root[c]
+
+  action run(c, a0, a1, a2, a3, n, a, b) -> issue(c, a0, a1, a2, a3, n, a, b)
+  action nameOk(c) -> stutter
+  action nameBad(c) -> rejectName(c)
+  action goUp(c) -> stutter
+  action found(c) -> locate(c, dir[c])
+  action notFound(c) -> noProject(c)
+  action fileOk(c) -> resolve(c)
+  action fileMissing(c) -> missing(c)
+  action fileDoubled(c) -> ambiguous(c)
+}

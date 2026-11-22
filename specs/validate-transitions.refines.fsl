@@ -1,0 +1,30 @@
+fsl 5
+// refine: validate-transitions.fsl workflow-transitions.fsl
+//
+// The transition check keeps the transition requirements.
+refinement ValidateTransitionsRefinesWorkflowTransitions {
+  impl ValidateTransitions
+  abs WorkflowTransitions
+
+  map definition_stage[d: Definition] =
+    if phase[d] == Waiting then Draft
+    else if phase[d] == Built then Written
+    else if phase[d] == Valid then Accepted
+    else Rejected
+  map definition_p0[d: Definition] = p0[d]
+  map definition_p1[d: Definition] = p1[d]
+  map definition_p2[d: Definition] = p2[d]
+  map definition_n0[d: Definition] = n0[d]
+  map definition_n1[d: Definition] = n1[d]
+  map definition_n2[d: Definition] = n2[d]
+  map definition_c0[d: Definition] = c0[d]
+  map definition_c1[d: Definition] = c1[d]
+  map definition_c2[d: Definition] = c2[d]
+  map definition_start[d: Definition] = start[d]
+  map definition_filled[d: Definition] = filled[d]
+
+  action fill(d, p, n, c) -> fill(d, p, n, c)
+  action build(d, s) -> write(d, s)
+  action validateOk(d) -> accept(d)
+  action validateFails(d) -> reject(d)
+}

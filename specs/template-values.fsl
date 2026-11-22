@@ -1,0 +1,130 @@
+fsl 5
+// Requirements for the value of a template, such as an input or an output written with ${{ }}.
+// Source: docs/reference/workflow-definition.md
+//
+// MODEL-TPL-001: a template has one reference. Whether it is the whole template, whether it is
+//                written in run, prompt, or env, and the kind of the value it names are given when
+//                it is written. Arrays count as objects. A reference with only white space around
+//                it, as String.prototype.trim removes it, such as the line break at the end of a
+//                YAML block scalar or U+3000, is the whole template, and the white space is
+//                dropped, also in run, prompt, and env. Any other character, such as a zero width
+//                space, makes it mixed. A template that is one call of a function, such as trim, is
+//                modeled as one reference whose kind is the value of the call
+//                (expression-functions.fsl). A template reads its references as a condition does
+//                (condition.fsl, MODEL-CND-004): one that goes through null or reads an output of a
+//                step that did not run is null, and another one that cannot be read, such as an
+//                index past the end of an array, fails the step.
+requirements TemplateValues {
+  enum Kind { NoKind, TextKind, NumberKind, BooleanKind, NullKind, ObjectKind }
+  enum Embedding { NoEmbedding, AsIs, AsEmpty, AsJson }
+  actor Author, Ugoke
+
+  entity Template {
+    whole: Bool = false
+    textOnly: Bool = false
+    kind: Kind = NoKind
+    produced: Kind = NoKind
+    embedding: Embedding = NoEmbedding
+    lifecycle Unwritten -> Written -> Evaluated
+  }
+
+  def embeddingOf(k: Kind) =
+    if k == NullKind then AsEmpty else if k == ObjectKind then AsJson else AsIs
+
+  // run, prompt, and env take only text, so a whole template there is embedded like a mixed one.
+  def keepsKind(w: Bool, t: Bool) = w and not t
+  def correct(w: Bool, t: Bool, k: Kind, p: Kind, e: Embedding) =
+    (keepsKind(w, t) and p == k and e == NoEmbedding)
+      or (not keepsKind(w, t) and p == TextKind and e == embeddingOf(k))
+
+  event write = Author writes Template with whole, textOnly, kind (Unwritten -> Written)
+    covers REQ-TPL-001 "式だけで書いた値と、ほかの文字と続けて書いた値がある"
+  event evaluate = Ugoke evaluates Template with produced, embedding (Written -> Evaluated)
+
+  rule REQ-TPL-002 "式だけで書いた値は、参照した値の型のまま。ほかの文字と続けて書いた値は文字列で、null は空の文字列に、オブジェクトと配列は JSON になる" {
+    allow Ugoke evaluates Template only when correct(whole, textOnly, kind, input produced, input embedding)
+    WholeKeepsKind: always Template in Evaluated has (not keepsKind(whole, textOnly) or produced == kind)
+    MixedIsText: always Template in Evaluated has (keepsKind(whole, textOnly) or produced == TextKind)
+    EmbeddedByKind: always Template in Evaluated has (if keepsKind(whole, textOnly) then embedding == NoEmbedding else embedding == embeddingOf(kind))
+  }
+  rule REQ-TPL-003 "run、prompt、env の値は、式だけで書いても、いつも文字列。null は空の文字列に、オブジェクトと配列は JSON になる" {
+    TextOnlyIsText: always Template in Evaluated has (not textOnly or produced == TextKind)
+  }
+
+  scenario AC-TPL-001 "式だけで書いた数は、数のまま" {
+    Author writes t1 with whole true, textOnly false, kind NumberKind
+    Ugoke evaluates t1 with produced NumberKind, embedding NoEmbedding
+    then t1 is Evaluated
+  }
+  scenario AC-TPL-002 "文字と続けて書いた null は、空の文字列" {
+    Author writes t1 with whole false, textOnly false, kind NullKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsEmpty
+    then t1 is Evaluated
+  }
+
+  scenario AC-TPL-003 "文字と続けて書いた文字列は、そのまま埋め込む" {
+    Author writes t1 with whole false, textOnly false, kind TextKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsIs
+    then t1 is Evaluated
+  }
+  scenario AC-TPL-004 "文字と続けて書いたオブジェクトは、JSON で埋め込む" {
+    Author writes t1 with whole false, textOnly false, kind ObjectKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsJson
+    then t1 is Evaluated
+  }
+  scenario AC-TPL-005 "文字と続けて書いた数は、そのまま文字にする" {
+    Author writes t1 with whole false, textOnly false, kind NumberKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsIs
+    then t1 is Evaluated
+  }
+
+  scenario AC-TPL-006 "env に式だけで書いたオブジェクトは、JSON の文字列" {
+    Author writes t1 with whole true, textOnly true, kind ObjectKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsJson
+    then t1 is Evaluated
+  }
+
+  forbidden FB-TPL-001 "式だけで書いた数を、文字列にしない" {
+    Author writes t1 with whole true, textOnly false, kind NumberKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsIs
+    then rejected
+  }
+  forbidden FB-TPL-002 "文字と続けて書いた null を、null という文字にしない" {
+    Author writes t1 with whole false, textOnly false, kind NullKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsIs
+    then rejected
+  }
+  forbidden FB-TPL-003 "文字と続けて書いたオブジェクトを、JSON 以外にしない" {
+    Author writes t1 with whole false, textOnly false, kind ObjectKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsIs
+    then rejected
+  }
+  forbidden FB-TPL-004 "文字と続けて書いた文字列を、JSON にしない" {
+    Author writes t1 with whole false, textOnly false, kind TextKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsJson
+    then rejected
+  }
+  forbidden FB-TPL-005 "書く前の値を、評価しない" {
+    Ugoke evaluates t1 with produced TextKind, embedding AsIs
+    then rejected
+  }
+  forbidden FB-TPL-006 "評価した値を、書き直さない" {
+    Author writes t1 with whole true, textOnly false, kind TextKind
+    Ugoke evaluates t1 with produced TextKind, embedding NoEmbedding
+    Author writes t1 with whole true, textOnly false, kind TextKind
+    then rejected
+  }
+  forbidden FB-TPL-007 "run に式だけで書いた数を、数のままにしない" {
+    Author writes t1 with whole true, textOnly true, kind NumberKind
+    Ugoke evaluates t1 with produced NumberKind, embedding NoEmbedding
+    then rejected
+  }
+  forbidden FB-TPL-008 "env に式だけで書いた null を、空の文字列以外にしない" {
+    Author writes t1 with whole true, textOnly true, kind NullKind
+    Ugoke evaluates t1 with produced TextKind, embedding AsIs
+    then rejected
+  }
+}
+verify {
+  instances Template = 1
+}

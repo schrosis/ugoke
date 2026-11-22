@@ -1,0 +1,133 @@
+fsl 5
+// Design of parseDefinition (packages/definition/src/parse.ts), which checks the shape of a
+// definition in three stages and stops at the first stage that finds a problem:
+//
+// 1. YAML syntax, which includes duplicate keys and multiple documents
+// 2. anchors and aliases (findAliasErrors)
+// 3. the definition schema and the notation checks, whose errors are reported together
+//
+// It refines the shape requirements of workflow-definition.fsl.
+spec ParseDefinition {
+  entity Definition
+  enum ParsePhase { Unread, Loaded, SyntaxChecked, AliasesChecked, Parsed, SyntaxBroken, AliasesBroken, SchemaBroken }
+
+  state {
+    phase: Map<Definition, ParsePhase>,
+    unsupportedVersion: Map<Definition, Bool>,
+    missingTopLevelField: Map<Definition, Bool>,
+    invalidStepId: Map<Definition, Bool>,
+    missingScriptField: Map<Definition, Bool>,
+    invalidTimeout: Map<Definition, Bool>,
+    unknownField: Map<Definition, Bool>,
+    duplicateKey: Map<Definition, Bool>,
+    multipleDocuments: Map<Definition, Bool>,
+    anchorOrAlias: Map<Definition, Bool>
+  }
+
+  init {
+    forall d: Definition {
+      phase[d] = Unread
+      unsupportedVersion[d] = false
+      missingTopLevelField[d] = false
+      invalidStepId[d] = false
+      missingScriptField[d] = false
+      invalidTimeout[d] = false
+      unknownField[d] = false
+      duplicateKey[d] = false
+      multipleDocuments[d] = false
+      anchorOrAlias[d] = false
+    }
+  }
+
+  def syntaxBroken(d: Definition) = duplicateKey[d] or multipleDocuments[d]
+
+  def schemaBroken(d: Definition) =
+    unsupportedVersion[d] or missingTopLevelField[d] or invalidStepId[d] or missingScriptField[d]
+      or invalidTimeout[d] or unknownField[d]
+
+  @requirement("REQ-DEF-011", "ワークフローは、YAML のファイルに定義する")
+  action write(d: Definition, a: Bool, b: Bool, c: Bool, e: Bool, f: Bool, g: Bool, h: Bool,
+      i: Bool, j: Bool) {
+    requires phase[d] == Unread
+    phase[d] = Loaded
+    unsupportedVersion[d] = a
+    missingTopLevelField[d] = b
+    invalidStepId[d] = c
+    missingScriptField[d] = e
+    invalidTimeout[d] = f
+    unknownField[d] = g
+    duplicateKey[d] = h
+    multipleDocuments[d] = i
+    anchorOrAlias[d] = j
+  }
+
+  @requirement("MODEL-PAR-001", "YAML の構文に問題がなければ、アンカーとエイリアスの確認に進む")
+  action syntaxOk(d: Definition) {
+    requires phase[d] == Loaded
+    requires not syntaxBroken(d)
+    phase[d] = SyntaxChecked
+  }
+
+  @requirement("REQ-DEF-007", "同じマップの中で重複したキーはエラーになる")
+  action syntaxFails(d: Definition) {
+    requires phase[d] == Loaded
+    requires syntaxBroken(d)
+    phase[d] = SyntaxBroken
+  }
+
+  @requirement("MODEL-PAR-002", "アンカーとエイリアスがなければ、スキーマの確認に進む")
+  action aliasesOk(d: Definition) {
+    requires phase[d] == SyntaxChecked
+    requires not anchorOrAlias[d]
+    phase[d] = AliasesChecked
+  }
+
+  @requirement("REQ-DEF-009", "YAML のアンカーとエイリアスはエラーになる")
+  action aliasesFail(d: Definition) {
+    requires phase[d] == SyntaxChecked
+    requires anchorOrAlias[d]
+    phase[d] = AliasesBroken
+  }
+
+  @requirement("REQ-DEF-010", "形の問題のない定義は、形のチェックを通る")
+  action schemaOk(d: Definition) {
+    requires phase[d] == AliasesChecked
+    requires not schemaBroken(d)
+    phase[d] = Parsed
+  }
+
+  @requirement("REQ-DEF-006", "定義にない項目はエラーになる")
+  action schemaFails(d: Definition) {
+    requires phase[d] == AliasesChecked
+    requires schemaBroken(d)
+    phase[d] = SchemaBroken
+  }
+
+  // A stage is reached only when the stages before it found no problem, so the errors of one
+  // definition come from one stage.
+  @requirement("MODEL-PAR-003", "前の段階で問題が見つかれば、後の段階は確かめない")
+  invariant LaterStagesSeeEarlierOnesPass {
+    forall d: Definition {
+      (phase[d] == AliasesChecked or phase[d] == Parsed or phase[d] == AliasesBroken
+          or phase[d] == SchemaBroken)
+        => not syntaxBroken(d)
+    }
+  }
+
+  @requirement("MODEL-PAR-003", "前の段階で問題が見つかれば、後の段階は確かめない")
+  invariant SchemaSeesNoAliases {
+    forall d: Definition {
+      (phase[d] == Parsed or phase[d] == SchemaBroken) => not anchorOrAlias[d]
+    }
+  }
+
+  terminal {
+    forall d: Definition {
+      phase[d] == Parsed or phase[d] == SyntaxBroken or phase[d] == AliasesBroken
+        or phase[d] == SchemaBroken
+    }
+  }
+}
+verify {
+  instances Definition = 1
+}

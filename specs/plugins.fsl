@@ -1,0 +1,152 @@
+fsl 5
+// Requirements for plugins: how a project loads the packages that plugins in .ugoke/config.yaml
+// names, how their extensions are named, and what a problem with them does.
+// Source: docs/reference/plugins.md
+//
+// MODEL-PLG-001: one plugin package of a project is modeled. Whether it is found, whether it loads,
+//                whether its default export is a plugin, whether its settings pass the schema of
+//                the plugin, whether its name or the names of its extensions are taken by another
+//                plugin or break the rules of names, and whether its package starts with @ugoke/
+//                are given when a command reads the configuration file. A package is found from
+//                the root of the project upward, and then next to ugoke. The packages load in the
+//                order of plugins. ugoke validate, ugoke run, and ugoke docs load them before they
+//                run anything, and ugoke attach before it follows a run. ugoke cancel and ugoke
+//                inbox list do not load them. The resident process loads them when it starts the
+//                Worker of the project (daemon-projects.fsl).
+// MODEL-PLG-002: a plugin runs in the process of ugoke, so a project trusts the plugins that it
+//                names as it trusts the scripts of its workflows. The terminal wait method is the
+//                only extension that ugoke has built in.
+// MODEL-PLG-003: settingsOk is true for a plugin with a config schema when the settings pass it,
+//                with an empty object when nothing is written, and for a plugin without a schema
+//                only when nothing or {} is written. The plugin receives the settings after the
+//                schema and its defaults are applied in the process that loads it, so the settings
+//                never go through Temporal or into the history. A required setting fails when
+//                nothing is written. The key of plugins must be the name of an npm package, which
+//                project-config.fsl checks with the file. The module of a package is the first
+//                target of exports whose condition is node, import, or default, in the order of
+//                its keys as Node takes it, or main without exports, or index.js without both.
+// MODEL-PLG-004: one name of an AI provider or a wait method in a definition is modeled. Whether
+//                a loaded plugin provides it, and whether an official plugin of ugoke would, are
+//                given when the definition is checked. The official plugins are
+//                @ugoke/adapter-ai-claude-code for claude-code, and @ugoke/adapter-wait-github for
+//                github_pr (github-pr.fsl). A name that objects inherit, such as toString, is not
+//                an official one.
+requirements Plugins {
+  enum Exit { Pending, Zero, One }
+  actor User, Ugoke
+
+  entity PluginPackage {
+    found: Bool = false
+    loads: Bool = false
+    isPlugin: Bool = false
+    settingsOk: Bool = false
+    taken: Bool = false
+    official: Bool = false
+    prefixed: Bool = false
+    exitCode: Exit = Pending
+    lifecycle Named -> Checked -> Loaded
+    lifecycle Checked -> Broken
+  }
+
+  entity ExtensionName {
+    provided: Bool = false
+    officialHas: Bool = false
+    hintShown: Bool = false
+    lifecycle Written -> Checking -> Known
+    lifecycle Checking -> Unknown
+  }
+
+  def usable(f: Bool, l: Bool, p: Bool, s: Bool, t: Bool) = f and l and p and s and not t
+  def prefix(o: Bool) = if o then false else true
+
+  event name = User names PluginPackage with found, loads, isPlugin, settingsOk, taken, official (Named -> Checked)
+    covers REQ-PLG-001 "プロジェクトの設定の plugins に書いたパッケージを、プラグインとして読み込む"
+  event load = Ugoke loads PluginPackage (Checked -> Loaded)
+    set prefixed = prefix(official)
+  event reject = Ugoke rejects PluginPackage (Checked -> Broken)
+    set exitCode = One
+  event write = User writes ExtensionName with provided, officialHas (Written -> Checking)
+    covers REQ-PLG-005 "どのプラグインも足していないプロバイダーや待ち方は、定義のエラー。ugoke のプラグインが足すものなら、入れるパッケージを表示する"
+  event know = Ugoke knows ExtensionName (Checking -> Known)
+  event refuse = Ugoke refuses ExtensionName (Checking -> Unknown)
+    set hintShown = officialHas
+
+  rule REQ-PLG-002 "パッケージが見つからない、読み込めない、既定のエクスポートがプラグインでない、名前が重なる、設定がプラグインの決まりに合わないときは、何も実行せずに 1 で終わる" {
+    allow Ugoke loads PluginPackage only when usable(found, loads, isPlugin, settingsOk, taken)
+    allow Ugoke rejects PluginPackage only when not usable(found, loads, isPlugin, settingsOk, taken)
+    BrokenExitsOne: always PluginPackage in Broken has exitCode == One
+  }
+  rule REQ-PLG-003 "@ugoke/ のパッケージのプロバイダーや待ち方は、そのままの名前。ほかのパッケージのものは、<プラグインの名前>/<名前>" {
+    PrefixedUnlessOfficial: always PluginPackage in Loaded has prefixed == prefix(official)
+  }
+  rule REQ-PLG-004 "設定は、プラグインの決まりで確かめる。設定を受け取らないプラグインには、何も書かないか {} だけを書く" {
+    LoadedSettingsPass: always PluginPackage in Loaded has settingsOk
+  }
+  rule REQ-PLG-005 "どのプラグインも足していないプロバイダーや待ち方は、定義のエラー。ugoke のプラグインが足すものなら、入れるパッケージを表示する" {
+    allow User writes ExtensionName only when not (input provided and input officialHas)
+    allow Ugoke knows ExtensionName only when provided
+    allow Ugoke refuses ExtensionName only when not provided
+    HintForOfficial: always ExtensionName in Unknown has hintShown == officialHas
+  }
+
+  scenario AC-PLG-001 "ほかのパッケージのプラグインは、<プラグインの名前>/<名前> で使う" {
+    User names p1 with found true, loads true, isPlugin true, settingsOk true, taken false, official false
+    Ugoke loads p1
+    then stage(p1) == Loaded and p1.prefixed
+  }
+  scenario AC-PLG-002 "@ugoke/ のプラグインは、そのままの名前で使う" {
+    User names p1 with found true, loads true, isPlugin true, settingsOk true, taken false, official true
+    Ugoke loads p1
+    then stage(p1) == Loaded and not p1.prefixed
+  }
+  scenario AC-PLG-003 "見つからないパッケージは、1 で終わる" {
+    User names p1 with found false, loads false, isPlugin false, settingsOk false, taken false, official false
+    Ugoke rejects p1
+    then stage(p1) == Broken and p1.exitCode == One
+  }
+  scenario AC-PLG-004 "設定が合わなければ、1 で終わる" {
+    User names p1 with found true, loads true, isPlugin true, settingsOk false, taken false, official true
+    Ugoke rejects p1
+    then p1 is Broken
+  }
+  scenario AC-PLG-005 "ugoke のプラグインが足すプロバイダーなら、入れるパッケージを表示する" {
+    User writes e1 with provided false, officialHas true
+    Ugoke refuses e1
+    then stage(e1) == Unknown and e1.hintShown
+  }
+  scenario AC-PLG-006 "プラグインが足したプロバイダーは、使える" {
+    User writes e1 with provided true, officialHas false
+    Ugoke knows e1
+    then e1 is Known
+  }
+
+  forbidden FB-PLG-001 "プラグインでないパッケージを、読み込まない" {
+    User names p1 with found true, loads true, isPlugin false, settingsOk true, taken false, official false
+    Ugoke loads p1
+    then rejected
+  }
+  forbidden FB-PLG-002 "名前が重なるプラグインを、読み込まない" {
+    User names p1 with found true, loads true, isPlugin true, settingsOk true, taken true, official false
+    Ugoke loads p1
+    then rejected
+  }
+  forbidden FB-PLG-003 "使えるプラグインを、断らない" {
+    User names p1 with found true, loads true, isPlugin true, settingsOk true, taken false, official false
+    Ugoke rejects p1
+    then rejected
+  }
+  forbidden FB-PLG-004 "どのプラグインも足していない名前を、使えることにしない" {
+    User writes e1 with provided false, officialHas false
+    Ugoke knows e1
+    then rejected
+  }
+  forbidden FB-PLG-005 "読み込めないパッケージを、読み込んだことにしない" {
+    User names p1 with found true, loads false, isPlugin false, settingsOk true, taken false, official true
+    Ugoke loads p1
+    then rejected
+  }
+}
+verify {
+  instances PluginPackage = 1
+  instances ExtensionName = 1
+}

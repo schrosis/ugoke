@@ -175,6 +175,25 @@ steps:
     });
   });
 
+  it("rejects multiline in a workflow input, which comes as JSON", () => {
+    const source = validSource.replace(
+      "start: fetch",
+      "inputs:\n  notes:\n    type: string\n    multiline: true\nstart: fetch",
+    );
+
+    expect(parseDefinition(source)).toMatchObject({
+      errors: [
+        {
+          column: 5,
+          line: 5,
+          message: "Unknown field: multiline",
+          path: ["inputs", "notes", "multiline"],
+        },
+      ],
+      ok: false,
+    });
+  });
+
   it("reports a number default of a string input as a type error", () => {
     const source = validSource.replace(
       "start: fetch",

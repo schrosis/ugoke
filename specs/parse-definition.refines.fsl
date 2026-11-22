@@ -1,0 +1,32 @@
+fsl 5
+// refine: parse-definition.fsl workflow-definition.fsl
+//
+// The stages of parseDefinition keep the shape requirements: a definition fails only for a
+// problem in its shape, and passes only without one.
+refinement ParseDefinitionRefinesWorkflowDefinition {
+  impl ParseDefinition
+  abs WorkflowDefinition
+
+  map definition_stage[d: Definition] =
+    if phase[d] == Unread then Draft
+    else if phase[d] == Parsed then Passed
+    else if phase[d] == SyntaxBroken or phase[d] == AliasesBroken or phase[d] == SchemaBroken then Failed
+    else Written
+  map definition_unsupportedVersion[d: Definition] = unsupportedVersion[d]
+  map definition_missingTopLevelField[d: Definition] = missingTopLevelField[d]
+  map definition_invalidStepId[d: Definition] = invalidStepId[d]
+  map definition_missingScriptField[d: Definition] = missingScriptField[d]
+  map definition_invalidTimeout[d: Definition] = invalidTimeout[d]
+  map definition_unknownField[d: Definition] = unknownField[d]
+  map definition_duplicateKey[d: Definition] = duplicateKey[d]
+  map definition_multipleDocuments[d: Definition] = multipleDocuments[d]
+  map definition_anchorOrAlias[d: Definition] = anchorOrAlias[d]
+
+  action write(d, a, b, c, e, f, g, h, i, j) -> write(d, a, b, c, e, f, g, h, i, j)
+  action syntaxOk(d) -> stutter
+  action syntaxFails(d) -> fail(d)
+  action aliasesOk(d) -> stutter
+  action aliasesFail(d) -> fail(d)
+  action schemaOk(d) -> pass(d)
+  action schemaFails(d) -> fail(d)
+}

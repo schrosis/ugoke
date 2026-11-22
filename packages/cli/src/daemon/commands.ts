@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { CommandContext } from "../commands/load.js";
@@ -8,7 +7,6 @@ import { workflowCodeVersion } from "@ugoke/engine";
 
 import { quote, serverArguments } from "../server.js";
 import type { ServerOptions } from "../server.js";
-import { stateDirectory } from "../state.js";
 import { getDaemonStatus, requestDaemonStop } from "./client.js";
 import type { DaemonStatus } from "./client.js";
 import { checkSocketPath, daemonPaths } from "./paths.js";
@@ -19,31 +17,15 @@ const waitTimeoutMs = 60_000;
 /** Options of {@link startDaemon}. */
 export interface StartDaemonOptions {
   /**
-   * Temporal Server of the resident process. A development server without a SQLite file keeps
-   * its runs in the state directory.
+   * Temporal Server of the resident process. Without it, the resident process starts a
+   * development server, which keeps its runs in the state directory.
    */
-  server: ServerOptions;
+  server?: ServerOptions | undefined;
   /** Version of this ugoke, to tell whether a running resident process differs. */
   version: string;
   /** Path of the ugoke executable that runs the resident process. */
   executable: string;
 }
-
-/**
- * Returns the server options with absolute paths, because the resident process runs in the state
- * directory.
- */
-const withAbsolutePaths = (server: ServerOptions, cwd: string): ServerOptions =>
-  server.type === "address"
-    ? server
-    : {
-        ...server,
-        dbFilename: server.dbFilename === undefined ? undefined : resolve(cwd, server.dbFilename),
-        temporalBin:
-          server.temporalBin?.includes("/") === true
-            ? resolve(cwd, server.temporalBin)
-            : server.temporalBin,
-      };
 
 /** Returns how a running resident process differs from the one that a command asks for. */
 const differences = (running: DaemonStatus, version: string, requested: string[]): string[] => {
@@ -54,7 +36,11 @@ const differences = (running: DaemonStatus, version: string, requested: string[]
   const runningOptions = running.serverOptions.trim();
   // The running process quotes its options for a command line, so the request is quoted too.
   if (runningOptions !== requested.map(quote).join(" ")) {
-    notes.push(`it uses the server options "${runningOptions}"`);
+    notes.push(
+      runningOptions === ""
+        ? "it uses its own development server"
+        : `it uses the server options "${runningOptions}"`,
+    );
   }
   return notes;
 };
@@ -91,12 +77,7 @@ export const startDaemon = async (
 ): Promise<number> => {
   const paths = daemonPaths();
   checkSocketPath(paths.socket);
-  // The resident process serves runs that last, so its development server always keeps them.
-  const kept: ServerOptions =
-    server.type === "dev" && server.dbFilename === undefined
-      ? { ...server, dbFilename: join(stateDirectory(), "temporal.db") }
-      : server;
-  const requested = serverArguments(withAbsolutePaths(kept, context.cwd));
+  const requested = server === undefined ? [] : serverArguments(server);
   const running = await getDaemonStatus(paths);
   if (running !== undefined) {
     context.stdout(`ugoke daemon: already running (${describe(running)})\n`);
@@ -193,7 +174,6 @@ export const showDaemonStatus = async (context: CommandContext): Promise<number>
       `ugoke daemon: running (${describe(status)})`,
       `started: ${status.startedAt}`,
       `log: ${paths.log}`,
-      ...(status.uiUrl === undefined ? [] : [`web ui: ${status.uiUrl}`]),
       ...(status.projects.length === 0
         ? ["projects: none"]
         : [

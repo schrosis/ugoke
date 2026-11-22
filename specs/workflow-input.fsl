@@ -1,0 +1,289 @@
+fsl 5
+// Requirements for the input of a workflow: its declaration in the definition, and the value that
+// ugoke run --input gives when a run starts.
+// Source: docs/reference/workflow-definition.md ("ワークフローの入力")
+//
+// MODEL-INP-001: one input is modeled. Its type matters only through whether the default and the
+//                given value fit it, so the type itself is not modeled.
+// MODEL-INP-002: a value under a name that the definition does not declare is one input of the run.
+// MODEL-INP-003: whether --input could be read is given when the run is requested. How it is read
+//                is described in input-option.fsl. Whether the values are over 512 KiB is also
+//                given then.
+// MODEL-INP-004: a run that starts without the CLI, such as from the Temporal Web UI, has no
+//                --input, and its numbers arrive already parsed.
+// MODEL-INP-005: badOptions means that the options of a choice are empty, contain an empty string,
+//                or repeat a value.
+// MODEL-INP-006: an input comes as JSON, so it has no multiline, which is an unknown field there
+//                (workflow-definition.fsl). A string with newlines is accepted as it is. multiline
+//                belongs to the answers of a wait step (terminal-prompt.fsl).
+requirements WorkflowInput {
+  enum Source { NoSource, Given, Default, Null }
+  actor Author, User, Ugoke
+
+  entity Input {
+    nameOk: Bool = false
+    required: Bool = false
+    hasDefault: Bool = false
+    defaultFits: Bool = false
+    badOptions: Bool = false
+    unknownName: Bool = false
+    given: Bool = false
+    valueFits: Bool = false
+    exponent: Bool = false
+    inputRead: Bool = false
+    tooLarge: Bool = false
+    viaCli: Bool = false
+    serverStarted: Bool = false
+    source: Source = NoSource
+    lifecycle Unwritten -> Written -> Declared -> Requested -> Started
+    lifecycle Written -> Invalid
+    lifecycle Requested -> Refused
+  }
+
+  def declarationOk(n: Bool, r: Bool, h: Bool, f: Bool, d: Bool) =
+    n and not (r and h) and (not h or f) and not d
+  def valueOk(r: Bool, u: Bool, g: Bool, f: Bool, e: Bool) =
+    not u and (g or not r) and (not g or (f and not e))
+  def inputOk(c: Bool, rd: Bool, big: Bool, r: Bool, u: Bool, g: Bool, fit: Bool, e: Bool) =
+    (not c or rd) and not big and valueOk(r, u, g, fit, c and e)
+  def sourceOf(g: Bool, h: Bool) = if g then Given else if h then Default else Null
+
+  event write = Author writes Input with nameOk, required, hasDefault, defaultFits, badOptions (Unwritten -> Written)
+    covers REQ-INP-001 "ワークフローの入力は、定義の inputs に宣言し、ugoke run の --input で値を渡す"
+  event declare = Ugoke declares Input (Written -> Declared)
+  event reject = Ugoke rejects Input (Written -> Invalid)
+  event request = User requests Input with viaCli, inputRead, tooLarge, unknownName, given, valueFits, exponent (Declared -> Requested)
+    covers REQ-INP-001 "ワークフローの入力は、定義の inputs に宣言し、ugoke run の --input で値を渡す"
+  event start = Ugoke starts Input with source (Requested -> Started)
+    set serverStarted = true
+  event refuse = Ugoke refuses Input (Requested -> Refused)
+
+  rule REQ-INP-002 "名前は英字で始め、英字、数字、_ だけで書く。required: true と default は一緒に書けない。default は type と options に合わなければならない。options は 1 つ以上書き、空の文字列と同じ値を重ねて書けない" {
+    allow Ugoke declares Input only when declarationOk(nameOk, required, hasDefault, defaultFits, badOptions)
+    allow Ugoke rejects Input only when not declarationOk(nameOk, required, hasDefault, defaultFits, badOptions)
+    DeclaredIsOk: always Input in Declared has declarationOk(nameOk, required, hasDefault, defaultFits, badOptions)
+    InvalidBreaksARule: always Input in Invalid has not declarationOk(nameOk, required, hasDefault, defaultFits, badOptions)
+  }
+  rule REQ-INP-003 "宣言にない名前の値、必須なのに渡さない値、型の合わない値、options にない値、指数の書き方の数を渡すと、実行せずに失敗する" {
+    allow Ugoke starts Input only when inputOk(viaCli, inputRead, tooLarge, required, unknownName, given, valueFits, exponent)
+    allow Ugoke refuses Input only when not inputOk(viaCli, inputRead, tooLarge, required, unknownName, given, valueFits, exponent)
+    StartedIsOk: always Input in Started has inputOk(viaCli, inputRead, tooLarge, required, unknownName, given, valueFits, exponent)
+    RefusedBreaksARule: always Input in Refused has not inputOk(viaCli, inputRead, tooLarge, required, unknownName, given, valueFits, exponent)
+  }
+  rule REQ-INP-004 "必須でない値を渡さなかったときは default を使う。default もなければ null" {
+    allow Ugoke starts Input only when input source == sourceOf(given, hasDefault)
+    SourceFollowsValue: always Input in Started has source == sourceOf(given, hasDefault)
+  }
+
+  rule REQ-INP-005 "--input が読めなければ、実行せずに失敗する" {
+    never Ugoke starts Input when viaCli and not inputRead
+    InputWasRead: always Input in Started has (not viaCli or inputRead)
+  }
+  rule REQ-INP-006 "ワークフローの入力は、JSON で 512 KiB まで。超えると、実行せずに失敗する" {
+    never Ugoke starts Input when tooLarge
+    StartedIsSmall: always Input in Started has not tooLarge
+  }
+  rule REQ-INP-007 "ugoke run は、サーバーを起動する前に入力を確かめる" {
+    RefusedWithoutServer: always Input in Refused has (not viaCli or not serverStarted)
+    StartedWithServer: always Input in Started has serverStarted
+  }
+
+  rule REQ-INP-008 "CLI を通らずに始めた実行でも、Workflow が入力を確かめ直し、合わなければステップを実行せずに失敗する" {
+    never Ugoke starts Input when not viaCli and not valueOk(required, unknownName, given, valueFits, false)
+    never Ugoke starts Input when not viaCli and tooLarge
+  }
+
+  scenario AC-INP-001 "宣言に合う値を渡すと、その値で始まる" {
+    Author writes i1 with nameOk true, required true, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given true, valueFits true, exponent false
+    Ugoke starts i1 with source Given
+    then i1 is Started
+  }
+  scenario AC-INP-002 "渡さなかった値は、default を使う" {
+    Author writes i1 with nameOk true, required false, hasDefault true, defaultFits true, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given false, valueFits false, exponent false
+    Ugoke starts i1 with source Default
+    then i1 is Started
+  }
+  scenario AC-INP-003 "default もなければ、null で始まる" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given false, valueFits false, exponent false
+    Ugoke starts i1 with source Null
+    then i1 is Started
+  }
+  scenario AC-INP-004 "必須なのに渡さないと、実行しない" {
+    Author writes i1 with nameOk true, required true, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given false, valueFits false, exponent false
+    Ugoke refuses i1
+    then i1 is Refused
+  }
+  scenario AC-INP-005 "required と default を一緒に書くと、定義のエラーになる" {
+    Author writes i1 with nameOk true, required true, hasDefault true, defaultFits true, badOptions false
+    Ugoke rejects i1
+    then i1 is Invalid
+  }
+  scenario AC-INP-006 "指数の書き方の数は、受け付けない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given true, valueFits true, exponent true
+    Ugoke refuses i1
+    then i1 is Refused
+  }
+
+  scenario AC-INP-007 "読めない --input では、実行しない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead false, tooLarge false, unknownName false, given true, valueFits true, exponent false
+    Ugoke refuses i1
+    then i1 is Refused
+  }
+  scenario AC-INP-008 "決まりに合わない名前は、定義のエラーになる" {
+    Author writes i1 with nameOk false, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke rejects i1
+    then i1 is Invalid
+  }
+
+  scenario AC-INP-009 "CLI を通らずに、必須の値なしで始めた実行は、失敗する" {
+    Author writes i1 with nameOk true, required true, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli false, inputRead false, tooLarge false, unknownName false, given false, valueFits true, exponent false
+    Ugoke refuses i1
+    then i1 is Refused
+  }
+  scenario AC-INP-010 "CLI を通らずに始めた実行は、--input がなくても始まる" {
+    Author writes i1 with nameOk true, required true, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli false, inputRead false, tooLarge false, unknownName false, given true, valueFits true, exponent true
+    Ugoke starts i1 with source Given
+    then i1 is Started
+  }
+
+  forbidden FB-INP-001 "宣言にない名前の値で、始めない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName true, given true, valueFits true, exponent false
+    Ugoke starts i1 with source Given
+    then rejected
+  }
+  forbidden FB-INP-002 "型の合わない値で、始めない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given true, valueFits false, exponent false
+    Ugoke starts i1 with source Given
+    then rejected
+  }
+  forbidden FB-INP-003 "渡した値があるのに、default を使わない" {
+    Author writes i1 with nameOk true, required false, hasDefault true, defaultFits true, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given true, valueFits true, exponent false
+    Ugoke starts i1 with source Default
+    then rejected
+  }
+  forbidden FB-INP-004 "default があるのに、null にしない" {
+    Author writes i1 with nameOk true, required false, hasDefault true, defaultFits true, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given false, valueFits false, exponent false
+    Ugoke starts i1 with source Null
+    then rejected
+  }
+  forbidden FB-INP-005 "型の合わない default を、受け付けない" {
+    Author writes i1 with nameOk true, required false, hasDefault true, defaultFits false, badOptions false
+    Ugoke declares i1
+    then rejected
+  }
+  forbidden FB-INP-006 "空や重なりのある options を、受け付けない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions true
+    Ugoke declares i1
+    then rejected
+  }
+  forbidden FB-INP-007 "正しい宣言を、エラーにしない" {
+    Author writes i1 with nameOk true, required true, hasDefault false, defaultFits false, badOptions false
+    Ugoke rejects i1
+    then rejected
+  }
+  forbidden FB-INP-008 "宣言に合う値を、拒まない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given true, valueFits true, exponent false
+    Ugoke refuses i1
+    then rejected
+  }
+  forbidden FB-INP-009 "必須でない値を渡さなくても、拒まない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given false, valueFits false, exponent false
+    Ugoke refuses i1
+    then rejected
+  }
+  forbidden FB-INP-010 "宣言のエラーがある定義を、実行しない" {
+    Author writes i1 with nameOk true, required true, hasDefault true, defaultFits true, badOptions false
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given true, valueFits true, exponent false
+    then rejected
+  }
+  forbidden FB-INP-011 "必須なのに渡さない値で、始めない" {
+    Author writes i1 with nameOk true, required true, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given false, valueFits false, exponent false
+    Ugoke starts i1 with source Null
+    then rejected
+  }
+  forbidden FB-INP-012 "渡さなかった値を、渡したことにしない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given false, valueFits false, exponent false
+    Ugoke starts i1 with source Given
+    then rejected
+  }
+  forbidden FB-INP-013 "書く前に、受け付けない" {
+    Ugoke declares i1
+    then rejected
+  }
+  forbidden FB-INP-014 "始めたあとに、拒まない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge false, unknownName false, given false, valueFits false, exponent false
+    Ugoke starts i1 with source Null
+    Ugoke refuses i1
+    then rejected
+  }
+  forbidden FB-INP-015 "読めない --input で、始めない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead false, tooLarge false, unknownName false, given true, valueFits true, exponent false
+    Ugoke starts i1 with source Given
+    then rejected
+  }
+  forbidden FB-INP-016 "512 KiB を超える入力で、始めない" {
+    Author writes i1 with nameOk true, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli true, inputRead true, tooLarge true, unknownName false, given true, valueFits true, exponent false
+    Ugoke starts i1 with source Given
+    then rejected
+  }
+  forbidden FB-INP-017 "決まりに合わない名前を、受け付けない" {
+    Author writes i1 with nameOk false, required false, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    then rejected
+  }
+  forbidden FB-INP-018 "CLI を通らずに始めた実行でも、必須の値なしで始めない" {
+    Author writes i1 with nameOk true, required true, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli false, inputRead false, tooLarge false, unknownName false, given false, valueFits true, exponent false
+    Ugoke starts i1 with source Null
+    then rejected
+  }
+  forbidden FB-INP-019 "CLI を通らずに始めた実行でも、512 KiB を超える入力で始めない" {
+    Author writes i1 with nameOk true, required true, hasDefault false, defaultFits false, badOptions false
+    Ugoke declares i1
+    User requests i1 with viaCli false, inputRead false, tooLarge true, unknownName false, given true, valueFits true, exponent false
+    Ugoke starts i1 with source Given
+    then rejected
+  }
+}
+verify {
+  instances Input = 1
+}

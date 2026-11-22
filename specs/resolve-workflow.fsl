@@ -1,0 +1,133 @@
+fsl 5
+// Design of resolveWorkflow (packages/cli/src/workflows.ts). It checks the name first, then
+// findProjectRoot looks for .ugoke in the directory where the command runs and, while it is not
+// there, in each parent in turn. It then looks for the .yaml and the .yml file of the name.
+//
+// It refines the requirements of project-files.fsl.
+spec ResolveWorkflow {
+  entity Command
+  type Level = 0..3
+  enum ResolvePhase { Asked, Started, Searching, RootFound, FileFound, NameRejected, NoRoot, FileMissing, FileDoubled }
+
+  state {
+    phase: Map<Command, ResolvePhase>,
+    u0: Map<Command, Bool>,
+    u1: Map<Command, Bool>,
+    u2: Map<Command, Bool>,
+    u3: Map<Command, Bool>,
+    validName: Map<Command, Bool>,
+    yaml: Map<Command, Bool>,
+    yml: Map<Command, Bool>,
+    dir: Map<Command, Level>,
+    root: Map<Command, Level>
+  }
+
+  init {
+    forall c: Command {
+      phase[c] = Asked
+      u0[c] = false
+      u1[c] = false
+      u2[c] = false
+      u3[c] = false
+      validName[c] = false
+      yaml[c] = false
+      yml[c] = false
+      dir[c] = 3
+      root[c] = 0
+    }
+  }
+
+  def hasUgoke(c: Command, x: Level) =
+    (x == 0 and u0[c]) or (x == 1 and u1[c]) or (x == 2 and u2[c]) or (x == 3 and u3[c])
+
+  @requirement("REQ-PRJ-004", "ワークフローは、名前で指定する")
+  action run(c: Command, a0: Bool, a1: Bool, a2: Bool, a3: Bool, n: Bool, a: Bool, b: Bool) {
+    requires phase[c] == Asked
+    phase[c] = Started
+    u0[c] = a0
+    u1[c] = a1
+    u2[c] = a2
+    u3[c] = a3
+    validName[c] = n
+    yaml[c] = a
+    yml[c] = b
+  }
+
+  @requirement("REQ-PRJ-003", "決まりに合わない名前は、プロジェクトを探す前にエラーになる")
+  action nameOk(c: Command) {
+    requires phase[c] == Started
+    requires validName[c]
+    phase[c] = Searching
+    dir[c] = 3
+  }
+
+  @requirement("REQ-PRJ-003", "決まりに合わない名前は、プロジェクトを探す前にエラーになる")
+  action nameBad(c: Command) {
+    requires phase[c] == Started
+    requires not validName[c]
+    phase[c] = NameRejected
+  }
+
+  @requirement("REQ-PRJ-001", "コマンドを実行したディレクトリから上へたどり、.ugoke のある最も近いディレクトリを、プロジェクトのルートにする")
+  action found(c: Command) {
+    requires phase[c] == Searching
+    requires hasUgoke(c, dir[c])
+    phase[c] = RootFound
+    root[c] = dir[c]
+  }
+
+  @requirement("REQ-PRJ-001", "コマンドを実行したディレクトリから上へたどり、.ugoke のある最も近いディレクトリを、プロジェクトのルートにする")
+  action goUp(c: Command) {
+    requires phase[c] == Searching
+    requires not hasUgoke(c, dir[c])
+    requires dir[c] > 0
+    dir[c] = dir[c] - 1
+  }
+
+  @requirement("REQ-PRJ-002", "どのディレクトリにも .ugoke がなければ、エラーになる")
+  action notFound(c: Command) {
+    requires phase[c] == Searching
+    requires not hasUgoke(c, dir[c])
+    requires dir[c] == 0
+    phase[c] = NoRoot
+  }
+
+  @requirement("REQ-PRJ-005", "名前に合う .yaml か .yml の定義を使う")
+  action fileOk(c: Command) {
+    requires phase[c] == RootFound
+    requires yaml[c] != yml[c]
+    phase[c] = FileFound
+  }
+
+  @requirement("REQ-PRJ-006", "同じ名前の .yaml と .yml のどちらもないときは、エラーになる")
+  action fileMissing(c: Command) {
+    requires phase[c] == RootFound
+    requires not yaml[c] and not yml[c]
+    phase[c] = FileMissing
+  }
+
+  @requirement("REQ-PRJ-007", "同じ名前の .yaml と .yml の両方があるときは、エラーになる")
+  action fileDoubled(c: Command) {
+    requires phase[c] == RootFound
+    requires yaml[c] and yml[c]
+    phase[c] = FileDoubled
+  }
+
+  // The search has passed every directory below dir, and none of them has .ugoke.
+  @requirement("MODEL-RES-001", "上へたどる途中で、通り過ぎたディレクトリには .ugoke がない")
+  invariant PassedDirectoriesHaveNoUgoke {
+    forall c: Command {
+      phase[c] == Searching => (forall y: Level { y > dir[c] => not hasUgoke(c, y) })
+    }
+  }
+
+  terminal {
+    forall c: Command {
+      phase[c] == FileFound or phase[c] == NameRejected or phase[c] == NoRoot
+        or phase[c] == FileMissing or phase[c] == FileDoubled
+    }
+  }
+}
+verify {
+  instances Command = 1
+}

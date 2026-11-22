@@ -128,7 +128,7 @@ export const ensureTemporalCli = async ({
 }: EnsureTemporalCliOptions = {}): Promise<string> => {
   if (!isPlatform(manifest, platform)) {
     throw new Error(
-      `Temporal CLI is not available for ${platform}. Pass the path of a Temporal CLI with --temporal-bin`,
+      `Temporal CLI is not available for ${platform}. Start ugoke daemon with --address of a Temporal Server`,
     );
   }
   const asset = manifest.assets[platform];

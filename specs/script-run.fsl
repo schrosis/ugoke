@@ -1,0 +1,252 @@
+fsl 5
+// Requirements for running the script of a step: its time limit, where it runs and which
+// environment it gets, which failing commands stop it, and how it is stopped when it passes its
+// time limit.
+// Source: docs/reference/workflow-definition.md ("script ステップ", "実行")
+//
+// MODEL-SCR-001: the script fails at most at one command, whose position is given when it fails.
+// MODEL-SCR-002: the time that a stopped script gets to end is one tick of the clock. The length of
+//                the tick (5 seconds) and the time limit itself are not modeled.
+// MODEL-SCR-003: a cancelled run aborts the script, and so does a terminated run, at the next
+//                heartbeat of the script. The end of the process of ugoke, such as by a second
+//                Ctrl+C, kills it.
+requirements ScriptRun {
+  enum Limit { NoLimit, GivenLimit, DefaultLimit }
+  enum EnvSource { NoEnv, OwnProcess, DaemonStart }
+  enum Position { Nowhere, Plain, PipelineMiddle, PipelineLast, Condition }
+  actor Runner, Clock, User, Host
+
+  entity ScriptRun {
+    timeoutGiven: Bool = false
+    inDaemon: Bool = false
+    limit: Limit = NoLimit
+    env: EnvSource = NoEnv
+    atRoot: Bool = false
+    failedAt: Position = Nowhere
+    asked: Bool = false
+    graceOver: Bool = false
+    forced: Bool = false
+    aborted: Bool = false
+    killed: Bool = false
+    lifecycle Ready -> Running -> Exited
+    lifecycle Running -> Running
+    lifecycle Running -> Failed
+    lifecycle Running -> Stopping -> Stopping
+    lifecycle Stopping -> Failed
+    lifecycle Stopping -> Cancelled
+  }
+
+  def limitOf(g: Bool) = if g then GivenLimit else DefaultLimit
+  def envOf(d: Bool) = if d then DaemonStart else OwnProcess
+  def stops(p: Position) = p == Plain or p == PipelineLast
+
+  event start = Runner starts ScriptRun with timeoutGiven, inDaemon, limit, env, atRoot (Ready -> Running)
+  event exit = Runner exits ScriptRun (Running -> Exited)
+    covers REQ-SCR-006 "コマンドが最後まで成功すると、スクリプトは終わる"
+  event pass = Runner passes ScriptRun with failedAt (Running -> Running)
+  event fail = Runner fails ScriptRun with failedAt (Running -> Failed)
+  event expire = Clock expires ScriptRun (Running -> Stopping)
+    set asked = true
+    covers REQ-SCR-005 "timeout を過ぎると、スクリプトに終了を求め、時間がたっても残っていれば強制的に止める。ステップは失敗する"
+  event lapse = Clock lapses ScriptRun (Stopping -> Stopping)
+    set graceOver = true
+    covers REQ-SCR-005 "timeout を過ぎると、スクリプトに終了を求め、時間がたっても残っていれば強制的に止める。ステップは失敗する"
+  event end = Runner ends ScriptRun (Stopping -> Failed)
+    covers REQ-SCR-005 "timeout を過ぎると、スクリプトに終了を求め、時間がたっても残っていれば強制的に止める。ステップは失敗する"
+  event force = Runner forces ScriptRun (Stopping -> Failed)
+    set forced = true
+  event abort = User aborts ScriptRun (Running -> Stopping)
+    set asked = true, aborted = true
+    covers REQ-SCR-007 "取り消すと、スクリプトに終了を求め、5 秒たっても残っていれば強制的に止める。ステップは取り消しで終わる"
+  event quit = Runner quits ScriptRun (Stopping -> Cancelled)
+  event forceQuit = Runner forceQuits ScriptRun (Stopping -> Cancelled)
+    set forced = true
+  event kill = Host kills ScriptRun (Running -> Failed)
+    set forced = true, killed = true
+    covers REQ-SCR-008 "ugoke のプロセスが終わると、実行中のスクリプトを、終了を求めずにすぐ強制的に止める"
+  event killStopping = Host killsStopping ScriptRun (Stopping -> Failed)
+    set forced = true, killed = true
+    covers REQ-SCR-008 "ugoke のプロセスが終わると、実行中のスクリプトを、終了を求めずにすぐ強制的に止める"
+
+  rule REQ-SCR-001 "timeout を書かなければ、既定の 30m を使う" {
+    allow Runner starts ScriptRun only when input limit == limitOf(input timeoutGiven)
+    LimitKept: always ScriptRun in Running has limit == limitOf(timeoutGiven)
+  }
+  rule REQ-SCR-002 "環境変数は、ステップを実行するプロセスのものを引き継ぐ。常駐プロセスで実行するときは、常駐プロセスを起動したときのもの" {
+    allow Runner starts ScriptRun only when input env == envOf(input inDaemon)
+    EnvKept: always ScriptRun in Running has env == envOf(inDaemon)
+  }
+  rule REQ-SCR-003 "作業ディレクトリは、プロジェクトのルート" {
+    allow Runner starts ScriptRun only when input atRoot
+    RootKept: always ScriptRun in Running has atRoot
+  }
+  rule REQ-SCR-004 "途中のコマンドが失敗すると、スクリプトが止まる。パイプラインの途中のコマンドと、if、&&、|| の条件として書いたコマンドは除く" {
+    allow Runner fails ScriptRun only when stops(input failedAt)
+    allow Runner passes ScriptRun only when input failedAt != Nowhere and not stops(input failedAt)
+  }
+  rule REQ-SCR-005 "timeout を過ぎると、スクリプトに終了を求め、時間がたっても残っていれば強制的に止める。ステップは失敗する" {
+    allow Runner forces ScriptRun only when graceOver
+    AskedBeforeForced: always ScriptRun in Failed has (not forced or asked or killed)
+    allow Runner ends ScriptRun only when not aborted
+    allow Runner forces ScriptRun only when not aborted
+  }
+  rule REQ-SCR-007 "取り消すと、スクリプトに終了を求め、5 秒たっても残っていれば強制的に止める。ステップは取り消しで終わる" {
+    allow Runner quits ScriptRun only when aborted
+    allow Runner forceQuits ScriptRun only when aborted and graceOver
+    CancelledWasAborted: always ScriptRun in Cancelled has aborted
+    AbortedIsNotFailed: always ScriptRun in Failed has (not aborted or killed)
+    AskedBeforeForcedQuit: always ScriptRun in Cancelled has (not forced or asked)
+  }
+
+  scenario AC-SCR-001 "timeout を書かないスクリプトが成功する" {
+    Runner starts s1 with timeoutGiven false, inDaemon false, limit DefaultLimit, env OwnProcess, atRoot true
+    Runner exits s1
+    then s1 is Exited
+  }
+  scenario AC-SCR-002 "条件として書いたコマンドの失敗では止まらない" {
+    Runner starts s1 with timeoutGiven true, inDaemon true, limit GivenLimit, env DaemonStart, atRoot true
+    Runner passes s1 with failedAt Condition
+    Runner exits s1
+    then s1 is Exited
+  }
+  scenario AC-SCR-003 "終了を求めても残っているスクリプトは、強制的に止める" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Clock expires s1
+    Clock lapses s1
+    Runner forces s1
+    then s1 is Failed
+  }
+  scenario AC-SCR-004 "終了を求めて終わったスクリプトのステップは失敗する" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Clock expires s1
+    Runner ends s1
+    then s1 is Failed
+  }
+  scenario AC-SCR-005 "途中のコマンドの失敗で止まる" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner fails s1 with failedAt Plain
+    then s1 is Failed
+  }
+
+  scenario AC-SCR-006 "パイプラインの最後のコマンドの失敗で止まる" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner fails s1 with failedAt PipelineLast
+    then s1 is Failed
+  }
+
+  scenario AC-SCR-007 "取り消すと、終了を求めて、ステップは取り消しで終わる" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    User aborts s1
+    Runner quits s1
+    then s1 is Cancelled
+  }
+  scenario AC-SCR-008 "取り消しても残るスクリプトは、強制的に止める" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    User aborts s1
+    Clock lapses s1
+    Runner forceQuits s1
+    then s1 is Cancelled
+  }
+  scenario AC-SCR-009 "ugoke のプロセスが終わると、すぐに強制的に止める" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Host kills s1
+    then s1 is Failed
+  }
+
+  forbidden FB-SCR-001 "timeout を書いたのに、既定を使わない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit DefaultLimit, env OwnProcess, atRoot true
+    then rejected
+  }
+  forbidden FB-SCR-002 "常駐プロセスで、自分のプロセスの環境変数を使わない" {
+    Runner starts s1 with timeoutGiven true, inDaemon true, limit GivenLimit, env OwnProcess, atRoot true
+    then rejected
+  }
+  forbidden FB-SCR-003 "プロジェクトのルート以外で実行しない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot false
+    then rejected
+  }
+  forbidden FB-SCR-004 "パイプラインの途中のコマンドの失敗で止めない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner fails s1 with failedAt PipelineMiddle
+    then rejected
+  }
+  forbidden FB-SCR-005 "そのまま書いたコマンドの失敗を見のがさない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner passes s1 with failedAt Plain
+    then rejected
+  }
+  forbidden FB-SCR-006 "終了を求める前に、強制的に止めない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner forces s1
+    then rejected
+  }
+  forbidden FB-SCR-007 "終了を求めてすぐに、強制的に止めない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Clock expires s1
+    Runner forces s1
+    then rejected
+  }
+  forbidden FB-SCR-008 "timeout を過ぎたスクリプトを、成功にしない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Clock expires s1
+    Runner exits s1
+    then rejected
+  }
+  forbidden FB-SCR-009 "パイプラインの最後のコマンドの失敗を見のがさない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner passes s1 with failedAt PipelineLast
+    then rejected
+  }
+  forbidden FB-SCR-010 "始まる前に、時間切れにしない" {
+    Clock expires s1
+    then rejected
+  }
+  forbidden FB-SCR-011 "終わったスクリプトを、失敗にしない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner exits s1
+    Runner fails s1 with failedAt Plain
+    then rejected
+  }
+  forbidden FB-SCR-012 "終了を求める前に、止まったことにしない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner ends s1
+    then rejected
+  }
+  forbidden FB-SCR-013 "同じスクリプトを 2 度始めない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    then rejected
+  }
+  forbidden FB-SCR-014 "失敗したスクリプトを、続けない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner fails s1 with failedAt Plain
+    Runner passes s1 with failedAt Condition
+    then rejected
+  }
+  forbidden FB-SCR-015 "失敗していないのに、失敗を見のがしたことにしない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Runner passes s1 with failedAt Nowhere
+    then rejected
+  }
+  forbidden FB-SCR-016 "取り消したスクリプトを、失敗にしない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    User aborts s1
+    Runner ends s1
+    then rejected
+  }
+  forbidden FB-SCR-017 "取り消してすぐに、強制的に止めない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    User aborts s1
+    Runner forceQuits s1
+    then rejected
+  }
+  forbidden FB-SCR-018 "時間切れのスクリプトを、取り消しにしない" {
+    Runner starts s1 with timeoutGiven true, inDaemon false, limit GivenLimit, env OwnProcess, atRoot true
+    Clock expires s1
+    Runner quits s1
+    then rejected
+  }
+}
+verify {
+  instances ScriptRun = 1
+}

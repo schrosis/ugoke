@@ -4,13 +4,14 @@ import { jsonBytes, maxValueBytes, runWorkflow, startWorkflow } from "@ugoke/eng
 import { realpath } from "node:fs/promises";
 
 import { reportAiFailure, writeAiLine } from "../ai.js";
-import { cancelledExitCode, followRun, fromAiNeedsDurableServer, rootMessage } from "../follow.js";
+import { cancelledExitCode } from "../exit-codes.js";
+import { followRun, rootMessage } from "../follow.js";
 import { readWorkflowInput } from "../input.js";
 import { acquireRunLock } from "../lock.js";
 import type { RunLock } from "../lock.js";
 import { openCommandServer } from "../daemon/connect.js";
 import { loadEncryptionKey } from "../encryption.js";
-import type { OpenedServer, ServerOptions } from "../server.js";
+import type { ServerOptions } from "../server.js";
 import { projectHash, projectLockDirectory, projectMemoKey, workflowMemoKey } from "../state.js";
 import { loadWorkflow } from "./load.js";
 import type { CommandContext } from "./load.js";
@@ -24,10 +25,7 @@ export interface RunOptions {
    * the steps.
    */
   server?: ServerOptions | undefined;
-  /**
-   * Aborted when the user interrupts. It detaches the run, or cancels it on a server that does
-   * not keep its runs.
-   */
+  /** Aborted when the user interrupts, which detaches the run. */
   signal: AbortSignal;
   /** Configures the Temporal runtime, right before the run starts. */
   prepareEngine?: () => void;
@@ -108,23 +106,13 @@ const runWorkflowCommand = async (
     return 1;
   }
 
-  // A development server without a SQLite file would lose the run at the first question, so the
-  // server is not started for nothing.
-  if (fromAi && server?.type === "dev" && server.dbFilename === undefined) {
-    writeAiLine(context.stdout, { message: fromAiNeedsDurableServer, type: "failed" });
-    return 1;
-  }
-
-  let opened: OpenedServer | undefined;
   try {
     const root = await realpath(workflow.root);
-    const { server: commandServer, servedTaskQueue } = await openCommandServer(
+    const { server: opened, servedTaskQueue } = await openCommandServer(
       { detach, server, version },
       root,
       context,
-      signal,
     );
-    opened = commandServer;
     if (signal.aborted) {
       context.stderr(`${name}: cancelled\n`);
       return cancelledExitCode;
@@ -192,14 +180,12 @@ const runWorkflowCommand = async (
       lock?.release();
     }
   } catch (error) {
-    // An interrupt while the server starts aborts the download or the wait for the server.
+    // An interrupt while the command connects stops it before the run starts.
     if (signal.aborted) {
       context.stderr(`${name}: cancelled\n`);
       return cancelledExitCode;
     }
     context.stderr(`${name}: failed: ${rootMessage(error)}\n`);
     return 1;
-  } finally {
-    await opened?.stop();
   }
 };

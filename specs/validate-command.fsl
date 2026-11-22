@@ -1,0 +1,140 @@
+fsl 5
+// Requirements for ugoke validate: it finds the definition of a workflow, checks it, and reports
+// the result with its exit status.
+// Source: docs/reference/commands/validate.md
+//
+// MODEL-VAL-003: whether the definition file is found (project-files.fsl) and whether the
+//                definition passes the checks (workflow-definition.fsl, workflow-transitions.fsl,
+//                branches.fsl, condition.fsl, condition-types.fsl, step-references.fsl,
+//                wait-step.fsl, ai-step.fsl, ai-result.fsl) are given when the command starts, and
+//                so is whether the problem is in the YAML syntax, an anchor or an alias. A problem
+//                in the configuration file of the project (project-config.fsl) ends the command
+//                like an invalid definition.
+requirements ValidateCommand {
+  enum Exit { Running, Zero, One }
+  enum Stream { Nowhere, Stdout, Stderr }
+  actor User, Ugoke
+
+  entity Check {
+    found: Bool = false
+    definitionOk: Bool = false
+    yamlProblem: Bool = false
+    pathShown: Bool = false
+    exitCode: Exit = Running
+    stream: Stream = Nowhere
+    lifecycle Typed -> Issued -> Valid
+    lifecycle Issued -> Invalid
+    lifecycle Issued -> NotFound
+  }
+
+  event issue = User validates Check with found, definitionOk, yamlProblem (Typed -> Issued)
+    covers REQ-PRJ-004 "ワークフローは、名前で指定する"
+  event pass = Ugoke passes Check (Issued -> Valid)
+    set exitCode = Zero, stream = Stdout
+  event flag = Ugoke flags Check with pathShown (Issued -> Invalid)
+    set exitCode = One, stream = Stderr
+  event miss = Ugoke misses Check (Issued -> NotFound)
+    set exitCode = One, stream = Stderr
+
+  rule REQ-VAL-001 "定義が正しいときは、標準出力に表示し、終了ステータスは 0" {
+    allow Ugoke passes Check only when found and definitionOk
+    ValidExitsZero: always Check in Valid has exitCode == Zero and stream == Stdout
+  }
+  rule REQ-VAL-002 "定義に問題があるときは、標準エラーに問題を表示し、終了ステータスは 1" {
+    allow Ugoke flags Check only when found and not definitionOk
+    InvalidExitsOne: always Check in Invalid has exitCode == One and stream == Stderr
+  }
+  rule REQ-VAL-003 "定義が見つからないときは、標準エラーに表示し、終了ステータスは 1" {
+    allow Ugoke misses Check only when not found
+    NotFoundExitsOne: always Check in NotFound has exitCode == One and stream == Stderr
+  }
+
+  rule REQ-VAL-004 "問題は、ファイル:行:列 項目のパス: メッセージ の形で表示する。YAML の構文のエラーと、アンカーとエイリアスのエラーには、項目のパスが付かない" {
+    allow User validates Check only when not (input yamlProblem and input definitionOk)
+    allow Ugoke flags Check only when input pathShown == not yamlProblem
+    PathUnlessYaml: always Check in Invalid has pathShown == not yamlProblem
+  }
+  rule REQ-VAL-005 "終わるまでは、終了ステータスは決まらない" {
+    UndecidedWhileChecking: always Check in Issued has exitCode == Running and stream == Nowhere
+    UndecidedBeforeChecking: always Check in Typed has exitCode == Running and stream == Nowhere
+  }
+
+  scenario AC-VAL-001 "正しい定義は valid と表示する" {
+    User validates k1 with found true, definitionOk true, yamlProblem false
+    Ugoke passes k1
+    then k1 is Valid
+  }
+
+  scenario AC-VAL-002 "問題のある定義は、項目のパスを付けて問題を表示する" {
+    User validates k1 with found true, definitionOk false, yamlProblem false
+    Ugoke flags k1 with pathShown true
+    then k1 is Invalid
+  }
+  scenario AC-VAL-003 "YAML の構文のエラーは、項目のパスを付けずに表示する" {
+    User validates k1 with found true, definitionOk false, yamlProblem true
+    Ugoke flags k1 with pathShown false
+    then k1 is Invalid
+  }
+  scenario AC-VAL-004 "見つからない定義は、見つからないと表示する" {
+    User validates k1 with found false, definitionOk false, yamlProblem false
+    Ugoke misses k1
+    then k1 is NotFound
+  }
+
+  forbidden FB-VAL-001 "問題のある定義を、正しいと表示しない" {
+    User validates k1 with found true, definitionOk false, yamlProblem false
+    Ugoke passes k1
+    then rejected
+  }
+  forbidden FB-VAL-002 "正しい定義を、問題があると表示しない" {
+    User validates k1 with found true, definitionOk true, yamlProblem false
+    Ugoke flags k1 with pathShown true
+    then rejected
+  }
+  forbidden FB-VAL-003 "見つかった定義を、見つからないと表示しない" {
+    User validates k1 with found true, definitionOk true, yamlProblem false
+    Ugoke misses k1
+    then rejected
+  }
+  forbidden FB-VAL-004 "YAML の構文のエラーに、項目のパスを付けない" {
+    User validates k1 with found true, definitionOk false, yamlProblem true
+    Ugoke flags k1 with pathShown true
+    then rejected
+  }
+  forbidden FB-VAL-005 "形の問題に、項目のパスを付け忘れない" {
+    User validates k1 with found true, definitionOk false, yamlProblem false
+    Ugoke flags k1 with pathShown false
+    then rejected
+  }
+  forbidden FB-VAL-006 "コマンドを打つ前に、結果を表示しない" {
+    Ugoke passes k1
+    then rejected
+  }
+  forbidden FB-VAL-007 "結果を表示したあとに、もう 1 度表示しない" {
+    User validates k1 with found true, definitionOk true, yamlProblem false
+    Ugoke passes k1
+    Ugoke flags k1 with pathShown true
+    then rejected
+  }
+  forbidden FB-VAL-008 "問題のある定義を、見つからないと表示しない" {
+    User validates k1 with found true, definitionOk false, yamlProblem false
+    Ugoke misses k1
+    then rejected
+  }
+  forbidden FB-VAL-009 "見つからない定義に、問題があると表示しない" {
+    User validates k1 with found false, definitionOk false, yamlProblem false
+    Ugoke flags k1 with pathShown true
+    then rejected
+  }
+  forbidden FB-VAL-010 "YAML の構文の問題がある定義を、正しい定義としない" {
+    User validates k1 with found true, definitionOk true, yamlProblem true
+    then rejected
+  }
+  forbidden FB-VAL-011 "コマンドを打つ前に、見つからないと表示しない" {
+    Ugoke misses k1
+    then rejected
+  }
+}
+verify {
+  instances Check = 1
+}

@@ -7,27 +7,20 @@ import { setTimeout as sleep } from "node:timers/promises";
 export interface DevServerOptions {
   /** Path of the Temporal CLI executable. */
   executable: string;
-  /** SQLite file that keeps the server state. The state is kept in memory when it is omitted. */
-  dbFilename?: string | undefined;
+  /** SQLite file that keeps the server state, so that its runs outlive the server. */
+  dbFilename: string;
   /** Time to wait for the server to accept connections, in milliseconds. */
   startTimeoutMs?: number;
   /** Time to wait for the server to stop after SIGTERM before it is killed, in milliseconds. */
   stopGraceMs?: number;
   /** Stops waiting for the server to start, and stops the server, when aborted. */
   signal?: AbortSignal | undefined;
-  /**
-   * Whether to start the Web UI. It is off by default, because a web page that the user opens
-   * can reach it through DNS rebinding and start a run, which runs commands on this machine.
-   */
-  ui?: boolean | undefined;
 }
 
 /** A running Temporal development server. */
 export interface DevServer {
   /** Address of the frontend service, such as `127.0.0.1:7233`. */
   address: string;
-  /** URL of the Web UI, when it was started. */
-  uiUrl?: string | undefined;
   /** Process ID of the server, which also leads its process group. */
   pid: number;
   /** Stops the server and waits for it to exit. */
@@ -79,19 +72,17 @@ const canConnect = async (port: number): Promise<boolean> =>
  * Returns the arguments of `temporal server start-dev`.
  *
  * Every port is given, so that the server does not take a default port that another server uses.
+ * The Web UI is not started, because a web page that the user opens could reach it through DNS
+ * rebinding and start a run, which runs commands on this machine.
  */
 export const devServerArguments = ({
   dbFilename,
   httpPort,
   port,
-  ui,
-  uiPort,
 }: {
-  dbFilename?: string | undefined;
+  dbFilename: string;
   httpPort: number;
   port: number;
-  ui: boolean;
-  uiPort: number;
 }): string[] => [
   "server",
   "start-dev",
@@ -103,10 +94,11 @@ export const devServerArguments = ({
   String(httpPort),
   "--dynamic-config-value",
   `frontend.httpAllowedHosts=${JSON.stringify([httpAllowedHost])}`,
-  ...(ui ? ["--ui-port", String(uiPort), "--ui-disable-news-fetch"] : ["--headless"]),
+  "--headless",
   "--log-level",
   "error",
-  ...(dbFilename === undefined ? [] : ["--db-filename", dbFilename]),
+  "--db-filename",
+  dbFilename,
 ];
 
 /** A server process that exited before it accepted connections, such as for a taken port. */
@@ -118,10 +110,9 @@ const startOnce = async ({
   signal,
   startTimeoutMs = 30_000,
   stopGraceMs = 5000,
-  ui = false,
 }: DevServerOptions): Promise<DevServer> => {
-  const [port, uiPort, httpPort] = await Promise.all([freePort(), freePort(), freePort()]);
-  const args = devServerArguments({ dbFilename, httpPort, port, ui, uiPort });
+  const [port, httpPort] = await Promise.all([freePort(), freePort()]);
+  const args = devServerArguments({ dbFilename, httpPort, port });
   const child = spawn(executable, args, {
     detached: true,
     stdio: ["ignore", "ignore", "pipe"],
@@ -149,7 +140,7 @@ const startOnce = async ({
   };
 
   // The server is in another process group, so it would outlive ugoke if ugoke exited without
-  // stopping it, such as by process.exit() on a second interrupt.
+  // stopping it, such as on an uncaught error.
   const killOnExit = (): void => kill("SIGKILL");
   process.once("exit", killOnExit);
 
@@ -211,15 +202,15 @@ const startOnce = async ({
     // The server accepts connections, so it has started and has a process ID.
     pid: child.pid ?? 0,
     stop,
-    ...(ui ? { uiUrl: `http://${host}:${uiPort}` } : {}),
   };
 };
 
 /**
  * Starts `temporal server start-dev` on free local ports and waits until it accepts connections.
  *
- * The server runs in its own process group, so that an interrupt in the terminal reaches only
- * ugoke. ugoke then cancels the workflow and stops the server itself.
+ * The server leads its own process group, which {@link DevServer.stop} signals. An interrupt in
+ * a terminal, such as of `ugoke daemon run`, then reaches only ugoke, which stops its Workers
+ * before it stops the server.
  */
 export const startDevServer = async (options: DevServerOptions): Promise<DevServer> => {
   try {

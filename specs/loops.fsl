@@ -1,0 +1,113 @@
+fsl 5
+// Requirements for loops: a step that runs again, the limits that stop a loop, and the outputs of
+// each visit of a step.
+// Source: docs/reference/workflow-definition.md ("ループ", "式")
+//
+// MODEL-LOP-001: one visit of a step is modeled. How many times the step ran before, whether it
+//                has maxVisits, and whether the history of the run is close to the limit of
+//                Temporal (40,000 events or 40 MiB) are given when the run goes to the step. Which
+//                transitions make a loop is in workflow-transitions.fsl.
+// MODEL-LOP-002: one reference to steps.<id>.visits[n].outputs.<name> is modeled. Whether the step
+//                has run n + 1 times is given when the reference is evaluated, and visits count
+//                from 0, oldest first. steps.<id>.outputs is the latest visit. A step that reads
+//                its own steps.<id> reads the visits before the current one, whose outputs the
+//                condition of its branch reads as outputs.<name>.
+// MODEL-LOP-003: an answer to a wait step tells the visit that it answers, so an answer to an
+//                earlier visit does not answer a later one.
+requirements Loops {
+  number Times
+  actor Author, Worker
+
+  entity Visit {
+    before: Times = 0
+    limited: Bool = false
+    limit: Times = 1
+    historyFull: Bool = false
+    lifecycle Planned -> Running
+    lifecycle Planned -> Stopped
+  }
+
+  entity VisitValue {
+    ran: Bool = false
+    isNull: Bool = false
+    lifecycle Unread -> Read
+  }
+
+  def allowed(b: Times, l: Bool, m: Times, h: Bool) = (not l or b < m) and not h
+
+  event plan = Author plans Visit with before, limited, limit, historyFull in Planned
+    covers REQ-LOP-001 "前のステップに戻ってループを作れる。どのステップからも end に着ける道が要る"
+  event run = Worker runs Visit (Planned -> Running)
+  event stop = Worker stops Visit (Planned -> Stopped)
+    covers REQ-LOP-002 "maxVisits の回数だけ動いたステップにもう一度進むと、そのステップを動かさずに、ワークフローは失敗する"
+  event read = Worker reads VisitValue with ran, isNull (Unread -> Read)
+    covers REQ-LOP-004 "steps.<id>.visits[n].outputs.<名前> で、n + 1 回目の outputs を参照できる。steps.<id>.outputs は、最後の回の outputs"
+
+  rule REQ-LOP-002 "maxVisits の回数だけ動いたステップにもう一度進むと、そのステップを動かさずに、ワークフローは失敗する" {
+    allow Author plans Visit only when input limit >= 1
+    allow Worker runs Visit only when allowed(before, limited, limit, historyFull)
+    allow Worker stops Visit only when not allowed(before, limited, limit, historyFull)
+    RunWithinMaxVisits: always Visit in Running has (not limited or before < limit)
+  }
+  rule REQ-LOP-003 "履歴が Temporal の上限に近づくと、次のステップを動かさずに、ワークフローは失敗する。maxVisits のないループも、ここで止まる" {
+    RunWithRoomInHistory: always Visit in Running has not historyFull
+  }
+  rule REQ-LOP-005 "まだ動いていない回の outputs は null" {
+    allow Worker reads VisitValue only when input ran or input isNull
+    NotRunIsNull: always VisitValue in Read has (ran or isNull)
+  }
+
+  scenario AC-LOP-001 "maxVisits のないステップは、何度でも動く" {
+    Author plans v1 with before 3, limited false, limit 1, historyFull false
+    Worker runs v1
+    then v1 is Running
+  }
+  scenario AC-LOP-002 "maxVisits の回数だけ動いたステップは、もう動かない" {
+    Author plans v1 with before 2, limited true, limit 2, historyFull false
+    Worker stops v1
+    then v1 is Stopped
+  }
+  scenario AC-LOP-003 "maxVisits より少なければ、もう一度動く" {
+    Author plans v1 with before 1, limited true, limit 2, historyFull false
+    Worker runs v1
+    then v1 is Running
+  }
+  scenario AC-LOP-004 "履歴が上限に近づくと、maxVisits がなくても止まる" {
+    Author plans v1 with before 3, limited false, limit 1, historyFull true
+    Worker stops v1
+    then v1 is Stopped
+  }
+  scenario AC-LOP-005 "まだ動いていない回の値は null" {
+    Worker reads w1 with ran false, isNull true
+    then w1 is Read
+  }
+
+  forbidden FB-LOP-001 "maxVisits を超えて、動かさない" {
+    Author plans v1 with before 2, limited true, limit 2, historyFull false
+    Worker runs v1
+    then rejected
+  }
+  forbidden FB-LOP-002 "履歴が上限に近いのに、動かさない" {
+    Author plans v1 with before 0, limited false, limit 1, historyFull true
+    Worker runs v1
+    then rejected
+  }
+  forbidden FB-LOP-003 "動いてよいステップを、止めない" {
+    Author plans v1 with before 0, limited true, limit 1, historyFull false
+    Worker stops v1
+    then rejected
+  }
+  forbidden FB-LOP-004 "まだ動いていない回の値を、null 以外にしない" {
+    Worker reads w1 with ran false, isNull false
+    then rejected
+  }
+  forbidden FB-LOP-005 "0 回の maxVisits は、書けない" {
+    Author plans v1 with before 0, limited true, limit 0, historyFull false
+    then rejected
+  }
+}
+verify {
+  instances Visit = 1
+  instances VisitValue = 1
+  values Times = 0..3
+}

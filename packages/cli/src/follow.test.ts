@@ -1,9 +1,12 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { CommandContext } from "./commands/load.ts";
-import { createTerminal, followRun, fromAiNeedsDurableServer } from "./follow.ts";
+import { createTerminal, followRun } from "./follow.ts";
 import type { OpenedServer } from "./server.ts";
 import { fixtureProject } from "./testing.ts";
 
@@ -64,13 +67,8 @@ describe("createTerminal", () => {
   });
 });
 
-/** A server that the command connected to, which keeps its runs or not. */
-const server = (durable: boolean): OpenedServer => ({
-  address: "127.0.0.1:7233",
-  durable,
-  options: durable ? " --dev --dev-db state.db" : " --dev",
-  stop: async () => {},
-});
+/** A server that the command connected to. */
+const server: OpenedServer = { address: "127.0.0.1:7233", options: " --address 127.0.0.1:7233" };
 
 describe("followRun", () => {
   it("prepares the engine right before it follows the run", async () => {
@@ -85,7 +83,7 @@ describe("followRun", () => {
         name: "run-success",
         prepareEngine: () => calls.push("prepareEngine"),
         root: fixtureProject,
-        server: server(true),
+        server,
       },
       createContext(Readable.from([])),
     );
@@ -94,30 +92,45 @@ describe("followRun", () => {
     expect(calls).toEqual(["prepareEngine", "follow"]);
   });
 
-  // An installed runtime would keep the process alive, because no Worker shuts it down.
-  it("does not prepare the engine when --from-ai cannot follow on the server", async () => {
-    const prepareEngine = vi.fn();
-    const follow = vi.fn();
-    const context = createContext(Readable.from([]));
-    const exitCode = await followRun(
-      {
-        follow,
-        fromAi: true,
-        interrupt: new AbortController().signal,
-        name: "run-success",
-        prepareEngine,
-        root: fixtureProject,
-        server: server(false),
-      },
-      context,
-    );
+  it("reads the encryption key before it prepares the engine, which keeps the process alive", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "ugoke-key-")));
+    const previous = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = base;
+    try {
+      mkdirSync(join(base, "ugoke"), { mode: 0o700 });
+      writeFileSync(join(base, "ugoke", "encryption.key"), "broken\n", { mode: 0o600 });
+      const calls: string[] = [];
+      let errors = "";
 
-    expect(exitCode).toBe(1);
-    expect(JSON.parse(context.written())).toEqual({
-      message: fromAiNeedsDurableServer,
-      type: "failed",
-    });
-    expect(prepareEngine).not.toHaveBeenCalled();
-    expect(follow).not.toHaveBeenCalled();
+      const exitCode = await followRun(
+        {
+          follow: async () => {
+            calls.push("follow");
+            return { executedSteps: [], status: "completed", workflowId: "run-1" };
+          },
+          interrupt: new AbortController().signal,
+          name: "run-success",
+          prepareEngine: () => calls.push("prepareEngine"),
+          root: fixtureProject,
+          server,
+        },
+        createContext(Readable.from([]), {
+          stderr: (text) => {
+            errors += text;
+          },
+        }),
+      );
+
+      expect(exitCode).toBe(1);
+      expect(calls).toEqual([]);
+      expect(errors).toContain("run-success: failed: The encryption key in");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.XDG_STATE_HOME;
+      } else {
+        process.env.XDG_STATE_HOME = previous;
+      }
+      rmSync(base, { force: true, recursive: true });
+    }
   });
 });

@@ -123,11 +123,9 @@ export const log = async (options: LogOptions, context: CommandContext): Promise
   const root = await realpath(found);
   const eventLog = createFileEventLog({ directory: projectLogDirectory(root) });
   let watcher: WorkflowStatusWatcher | undefined;
-  let stopServer: (() => Promise<void>) | undefined;
   try {
     if (follow) {
-      const { server } = await openCommandServer(options, root, context, signal);
-      stopServer = server.stop;
+      const { server } = await openCommandServer(options, root, context);
       watcher = await watchWorkflowStatus({
         address: server.address,
         encryptionKey: loadEncryptionKey(),
@@ -169,6 +167,5 @@ export const log = async (options: LogOptions, context: CommandContext): Promise
     return 1;
   } finally {
     await watcher?.close();
-    await stopServer?.();
   }
 };

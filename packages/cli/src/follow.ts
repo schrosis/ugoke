@@ -13,6 +13,7 @@ import type { AiLine } from "./ai.js";
 import type { CommandContext } from "./commands/load.js";
 import { loadEncryptionKey } from "./encryption.js";
 import { createEnvironmentReader } from "./environment.js";
+import { cancelledExitCode, detachedExitCode } from "./exit-codes.js";
 import { createLineReader } from "./lines.js";
 import type { LineReader } from "./lines.js";
 import { readProjectConfig } from "./config.js";
@@ -21,16 +22,6 @@ import { createProgressPrinter } from "./progress.js";
 import type { ProgressPrinter } from "./progress.js";
 import type { OpenedServer } from "./server.js";
 import { projectLogDirectory } from "./state.js";
-
-/** Exit code of a run that was cancelled, following the shell convention for SIGINT. */
-export const cancelledExitCode = 130;
-
-/**
- * Exit code of a run that was left running, which a process can attach to later.
- *
- * It is not zero, so that a script that runs ugoke does not take the run as completed.
- */
-export const detachedExitCode = 3;
 
 /** Returns whether an error of the engine means that the run was cancelled. */
 export const isCancelled = (error: unknown): boolean =>
@@ -124,10 +115,6 @@ export const createTerminal = (
   };
 };
 
-/** Why `--from-ai` cannot follow a run on a server that loses its runs when it stops. */
-export const fromAiNeedsDurableServer =
-  "--from-ai needs a server that keeps its runs, such as of ugoke daemon, or --dev with --dev-db";
-
 /** Options of {@link followRun}. */
 export interface FollowRunOptions {
   /** Name of the workflow, which prefixes the messages. */
@@ -138,8 +125,8 @@ export interface FollowRunOptions {
   steps?: readonly string[] | undefined;
   server: OpenedServer;
   /**
-   * Aborted when the user interrupts. On a server that keeps its runs, it detaches the run, so
-   * that a process can attach to it later. Otherwise, it cancels the run.
+   * Aborted when the user interrupts. It detaches the run, so that a process can attach to it
+   * later.
    */
   interrupt: AbortSignal;
   /**
@@ -222,9 +209,6 @@ export const followRun = async (
     if (!fromAi) {
       context.stdout("\n");
     }
-    if (!server.durable) {
-      return;
-    }
     if (ownsWorker && runningStep !== undefined) {
       context.stderr(
         "Waiting for the running step to finish, so that you can attach to the run later.\n" +
@@ -236,11 +220,6 @@ export const followRun = async (
   interrupt.addEventListener("abort", onInterrupt, { once: true });
 
   try {
-    // Stopping at a question leaves the run waiting, which a server without runs would lose.
-    if (fromAi && !server.durable) {
-      write({ message: fromAiNeedsDurableServer, type: "failed" });
-      return 1;
-    }
     // The file is read once, so that the progress and the plugins follow the same contents.
     const read = await readProjectConfig(root, context.cwd);
     printer = fromAi
@@ -254,6 +233,9 @@ export const followRun = async (
         });
     // Plugins load before the run starts, so that a broken one stops nothing.
     const loaded = await loadConfiguredPlugins(read, root);
+    // The key is read first, because a process with a prepared engine does not exit by itself
+    // until it reaches the server.
+    const encryptionKey = loadEncryptionKey();
     prepareEngine?.();
     const following = follow({
       address: server.address,
@@ -269,7 +251,7 @@ export const followRun = async (
         context.stderr(`${name}: warning: ${message}\n`);
       },
       aiRunner: createAiRunner({ cwd: root, plugins: createRegistry(undefined, loaded) }),
-      encryptionKey: loadEncryptionKey(),
+      encryptionKey,
       plugins: fromAi
         ? createRegistryWith(
             createAiTerminalPlugin((question) => {
@@ -284,7 +266,7 @@ export const followRun = async (
         : createRegistry(terminal, loaded),
       readEnvironment: createEnvironmentReader(root),
       scriptRunner: createLocalScriptRunner({ cwd: root }),
-      ...(server.durable ? { detach: detach.signal } : { signal: interrupt }),
+      detach: detach.signal,
     });
     // The status line is removed before the result of the run is written.
     const outcome = await following.finally(() => printer?.close());
@@ -318,10 +300,7 @@ export const followRun = async (
       return 1;
     }
     if (isCancelled(error) || interrupt.aborted) {
-      const note = server.durable
-        ? ""
-        : ". A development server without --dev-db keeps no runs to attach to later";
-      context.stderr(`${name}: cancelled${note}\n`);
+      context.stderr(`${name}: cancelled\n`);
       return cancelledExitCode;
     }
     if (error instanceof IncompatibleRunError) {

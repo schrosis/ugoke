@@ -284,13 +284,4 @@ describe("attach and cancel", () => {
       stdout: "",
     });
   }, 60_000);
-
-  it("needs --dev-db with --dev", async () => {
-    await expect(execute(attach, undefined, "", { type: "dev" })).resolves.toEqual({
-      exitCode: 1,
-      stderr:
-        "ugoke attach needs --dev-db with --dev, because a development server without it keeps no runs\n",
-      stdout: "",
-    });
-  });
 });

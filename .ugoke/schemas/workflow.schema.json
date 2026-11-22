@@ -37,10 +37,6 @@
               },
               "default": {
                 "type": "string"
-              },
-              "multiline": {
-                "description": "Whether the value can span lines. The terminal wait method asks for it in an editor",
-                "type": "boolean"
               }
             },
             "required": ["type"],
@@ -382,7 +378,7 @@
                                     "type": "string"
                                   },
                                   "multiline": {
-                                    "description": "Whether the value can span lines. The terminal wait method asks for it in an editor",
+                                    "description": "Whether the value can span lines. The terminal wait method asks for it on several lines",
                                     "type": "boolean"
                                   }
                                 },

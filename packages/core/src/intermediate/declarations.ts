@@ -9,17 +9,23 @@ const inputBase = {
   required: z.boolean(),
 };
 
+/** Field of a string that the terminal wait method asks for on several lines. */
+const multiline = z.boolean().optional();
+
 // z.number() accepts only finite numbers.
-const declarationOptions = <Required extends z.ZodType<boolean>>(
+const declarationOptions = <
+  Required extends z.ZodType<boolean>,
+  StringFields extends z.ZodRawShape,
+>(
   base: { description: z.ZodOptional<z.ZodString>; required: Required },
-  multiline: z.ZodOptional<z.ZodBoolean> = z.boolean().optional(),
+  stringFields: StringFields,
 ) =>
   [
     z.strictObject({
       type: z.literal("string"),
       ...base,
       default: z.string().optional(),
-      multiline,
+      ...stringFields,
     }),
     z.strictObject({ type: z.literal("number"), ...base, default: z.number().optional() }),
     z.strictObject({ type: z.literal("boolean"), ...base, default: z.boolean().optional() }),
@@ -32,7 +38,10 @@ const declarationOptions = <Required extends z.ZodType<boolean>>(
   ] as const;
 
 /** Schema of a declaration of a value, such as a workflow input, in the intermediate form. */
-export const inputDeclarationSchema = z.discriminatedUnion("type", declarationOptions(inputBase));
+export const inputDeclarationSchema = z.discriminatedUnion(
+  "type",
+  declarationOptions(inputBase, { multiline }),
+);
 
 /** Declaration of a value that a workflow or a step receives, with a type and constraints. */
 export type InputDeclaration = z.infer<typeof inputDeclarationSchema>;
@@ -70,28 +79,40 @@ export const checkInputDeclarations = (
     return errors;
   });
 
+/** Fields of every declaration as a definition writes it. `required` defaults to `false`. */
+const definitionBase = {
+  description: z.string().optional().describe("Description of the value"),
+  required: z
+    .boolean()
+    .default(false)
+    .describe("Whether the value must be given. It cannot be combined with default"),
+};
+
 /**
- * Schema of a single declaration as a definition writes it. `required` defaults to `false`.
+ * Schema of a single declaration of a value that someone answers, as a definition writes it, such
+ * as an answer of a wait step. `required` defaults to `false`.
  *
  * It does not check what {@link checkInputDeclarations} checks.
  */
 export const inputDeclarationDefinitionSchema = z.discriminatedUnion(
   "type",
-  declarationOptions(
-    {
-      description: z.string().optional().describe("Description of the value"),
-      required: z
-        .boolean()
-        .default(false)
-        .describe("Whether the value must be given. It cannot be combined with default"),
-    },
-    z
-      .boolean()
-      .optional()
-      .describe(
-        "Whether the value can span lines. The terminal wait method asks for it in an editor",
-      ),
-  ),
+  declarationOptions(definitionBase, {
+    multiline: multiline.describe(
+      "Whether the value can span lines. The terminal wait method asks for it on several lines",
+    ),
+  }),
+);
+
+/**
+ * Schema of a single input of a workflow as a definition writes it. `required` defaults to
+ * `false`.
+ *
+ * It has no `multiline`, because the input comes as JSON, which nothing asks for line by line.
+ * It does not check what {@link checkInputDeclarations} checks.
+ */
+export const workflowInputDeclarationDefinitionSchema = z.discriminatedUnion(
+  "type",
+  declarationOptions(definitionBase, {}),
 );
 
 /**

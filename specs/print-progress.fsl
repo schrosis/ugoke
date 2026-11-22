@@ -1,0 +1,83 @@
+fsl 5
+// Design of how ugoke run shows the output of a step. createProgressPrinter
+// (packages/cli/src/progress.ts) writes each piece of output to the stream that the step used,
+// remembers the streams whose output does not end with a newline, and ends those lines before it
+// writes the line of the next step event.
+//
+// It refines the requirements of script-output.fsl.
+spec PrintProgress {
+  entity StepRun
+  enum PrintPhase { Idle, Streaming, Closing, Closed }
+  enum Stream { NoStream, Stdout, Stderr }
+
+  state {
+    phase: Map<StepRun, PrintPhase>,
+    // The stream of the last piece of output, as the step wrote it and as it was written.
+    written: Map<StepRun, Stream>,
+    target: Map<StepRun, Stream>,
+    // Streams whose output does not end with a newline.
+    openOut: Map<StepRun, Bool>,
+    openErr: Map<StepRun, Bool>,
+    endAtLineStart: Map<StepRun, Bool>
+  }
+
+  init {
+    forall s: StepRun {
+      phase[s] = Idle
+      written[s] = NoStream
+      target[s] = NoStream
+      openOut[s] = false
+      openErr[s] = false
+      endAtLineStart[s] = false
+    }
+  }
+
+  @requirement("MODEL-PRT-001", "ステップの始まりの行を書く")
+  action begin(s: StepRun) {
+    requires phase[s] == Idle
+    phase[s] = Streaming
+  }
+
+  @requirement("REQ-OUT-001", "コマンドの出力は、コマンドが書いたのと同じ所（標準出力か標準エラー）に表示する")
+  action output(s: StepRun, st: Stream, endsLine: Bool) {
+    requires phase[s] == Streaming
+    requires st != NoStream
+    written[s] = st
+    target[s] = st
+    openOut[s] = if st == Stdout then not endsLine else openOut[s]
+    openErr[s] = if st == Stderr then not endsLine else openErr[s]
+  }
+
+  // Before the line of the end, writeStep ends the open line of each stream, on that stream.
+  @requirement("REQ-OUT-002", "改行で終わらない出力のあとも、ステップの結果の行は新しい行から始める")
+  action closeLines(s: StepRun) {
+    requires phase[s] == Streaming
+    phase[s] = Closing
+    openOut[s] = false
+    openErr[s] = false
+  }
+
+  // Then it writes the line of the end, which starts a line only when no line is open.
+  @requirement("MODEL-PRT-004", "開いている行を閉じてから、結果の行を書く")
+  action end(s: StepRun) {
+    requires phase[s] == Closing
+    phase[s] = Closed
+    endAtLineStart[s] = not openOut[s] and not openErr[s]
+  }
+
+  @requirement("MODEL-PRT-002", "ステップが終わったあとは、何も起きない")
+  action rest(s: StepRun) {
+    requires phase[s] == Closed
+    phase[s] = Closed
+  }
+
+  @requirement("MODEL-PRT-003", "ステップが終わると、開いている行はない")
+  invariant NoOpenLineAfterEnd {
+    forall s: StepRun { phase[s] == Closed => (not openOut[s] and not openErr[s]) }
+  }
+
+  terminal { forall s: StepRun { phase[s] == Closed } }
+}
+verify {
+  instances StepRun = 1
+}

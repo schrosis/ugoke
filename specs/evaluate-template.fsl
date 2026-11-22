@@ -1,0 +1,83 @@
+fsl 5
+// Design of the evaluation of a template. evaluateTemplate
+// (packages/core/src/expression/evaluate.ts) returns the value of a template that is one
+// expression with only whitespace around it, and otherwise joins the parts with embedValue, which
+// keeps a string, writes null as nothing, and writes an object or an array as JSON. run, prompt,
+// and env take only text, so the activities embed their value with embedValue also when the
+// template is one expression (packages/engine/src/activities/index.ts).
+//
+// It refines the requirements of template-values.fsl.
+spec EvaluateTemplate {
+  entity Template
+  enum EvalPhase { Empty, Parsed, Done }
+  enum Value { NoValue, Str, Num, Bool, Null, Obj }
+  enum Form { NoForm, Plain, Nothing, Json }
+
+  state {
+    phase: Map<Template, EvalPhase>,
+    single: Map<Template, Bool>,
+    textOnly: Map<Template, Bool>,
+    referenced: Map<Template, Value>,
+    result: Map<Template, Value>,
+    form: Map<Template, Form>
+  }
+
+  init {
+    forall t: Template {
+      phase[t] = Empty
+      single[t] = false
+      textOnly[t] = false
+      referenced[t] = NoValue
+      result[t] = NoValue
+      form[t] = NoForm
+    }
+  }
+
+  // embedValue
+  def embed(v: Value) = if v == Null then Nothing else if v == Obj then Json else Plain
+
+  @requirement("REQ-TPL-001", "式だけで書いた値と、ほかの文字と続けて書いた値がある")
+  action parse(t: Template, s: Bool, x: Bool, v: Value) {
+    requires phase[t] == Empty
+    requires v != NoValue
+    phase[t] = Parsed
+    single[t] = s
+    textOnly[t] = x
+    referenced[t] = v
+  }
+
+  @requirement("MODEL-EVL-001", "式だけで書いた値は、参照した値を返す")
+  action returnValue(t: Template, r: Value) {
+    requires phase[t] == Parsed
+    requires single[t] and not textOnly[t]
+    requires r == referenced[t]
+    phase[t] = Done
+    result[t] = r
+  }
+
+  @requirement("REQ-TPL-002", "式だけで書いた値は、参照した値の型のまま。ほかの文字と続けて書いた値は文字列で、null は空の文字列に、オブジェクトと配列は JSON になる")
+  action join(t: Template, f: Form) {
+    requires phase[t] == Parsed
+    requires not single[t] or textOnly[t]
+    requires f == embed(referenced[t])
+    phase[t] = Done
+    result[t] = Str
+    form[t] = f
+  }
+
+  @requirement("MODEL-EVL-002", "評価したあとは、何も起きない")
+  action rest(t: Template) {
+    requires phase[t] == Done
+    phase[t] = Done
+  }
+
+  @requirement("MODEL-EVL-003", "文字と続けた値と、run と env の値だけが、埋め込みの形を持つ")
+  invariant OnlyJoinedValuesHaveForm {
+    forall t: Template { phase[t] == Done => ((form[t] == NoForm) == (single[t] and not textOnly[t])) }
+  }
+
+  terminal { forall t: Template { phase[t] == Done } }
+}
+verify {
+  instances Template = 1
+}

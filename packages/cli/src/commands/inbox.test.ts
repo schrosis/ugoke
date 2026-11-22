@@ -77,7 +77,7 @@ describe("inbox", () => {
   const list = async (cwd = fixtureProject) => {
     const output = createOutput();
     const exitCode = await listInboxCommand(
-      { server: server(), signal, version: "0.0.0" },
+      { server: server(), version: "0.0.0" },
       { cwd, stderr: output.stderr, stdout: output.stdout },
     );
     return { exitCode, ...output.written };
@@ -233,7 +233,7 @@ describe("inbox", () => {
     // No Worker serves the run after the command exited.
     const listed = createOutput();
     await listInboxCommand(
-      { fromAi: true, server: server(), signal, version: "0.0.0" },
+      { fromAi: true, server: server(), version: "0.0.0" },
       { cwd: fixtureProject, ...listed },
     );
     expect(lines(listed.written.stdout)).toContainEqual({

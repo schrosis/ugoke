@@ -116,6 +116,45 @@ describe("createProjectWorkers", () => {
     expect(workers.list()).toMatchObject([{ running: true }]);
   });
 
+  it("reads the encryption key before it prepares the engine, and tries again after the key is fixed", async () => {
+    const previous = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = directory;
+    try {
+      mkdirSync(join(directory, "ugoke"), { mode: 0o700 });
+      const key = join(directory, "ugoke", "encryption.key");
+      writeFileSync(key, "broken\n", { mode: 0o600 });
+      let prepared = 0;
+      const workers = createProjectWorkers({
+        address: "127.0.0.1:7233",
+        file,
+        log: (message) => lines.push(message),
+        // A process with a prepared engine does not exit by itself until it reaches the server.
+        prepareEngine: () => {
+          prepared += 1;
+        },
+        startWorker: async (options) => {
+          started.push(options);
+          return succeed();
+        },
+      });
+
+      await expect(workers.add(project)).rejects.toThrow("The encryption key in");
+      expect(prepared).toBe(0);
+      expect(started).toEqual([]);
+
+      rmSync(key);
+      await workers.add(project);
+      expect(prepared).toBe(1);
+      expect(started).toHaveLength(1);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.XDG_STATE_HOME;
+      } else {
+        process.env.XDG_STATE_HOME = previous;
+      }
+    }
+  });
+
   it("runs the Worker on the server that the project names", async () => {
     writeFileSync(
       join(project, ".ugoke", "config.yaml"),

@@ -163,7 +163,7 @@ describe("ensureTemporalCli", () => {
         manifest,
         platform: "win32-x64",
       }),
-    ).rejects.toThrow("--temporal-bin");
+    ).rejects.toThrow("Start ugoke daemon with --address");
     expect(requests).toEqual([]);
   });
 });

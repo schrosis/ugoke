@@ -6,10 +6,10 @@ import {
   envNamePattern,
   identifierPattern,
   identifierSource,
-  inputDeclarationDefinitionSchema,
   isJsonObject,
   jsonSchemaTarget,
   toJsonSchema,
+  workflowInputDeclarationDefinitionSchema,
 } from "@ugoke/core";
 import type { JsonObject, PluginRegistry, WaitMethod } from "@ugoke/core";
 import { z } from "zod";
@@ -153,7 +153,7 @@ export const definitionSchema = z.strictObject({
     .describe("JSON Schema of the file for editors, such as ../schemas/workflow.schema.json"),
   version: z.literal(definitionVersion),
   inputs: z
-    .record(identifierSchema, inputDeclarationDefinitionSchema)
+    .record(identifierSchema, workflowInputDeclarationDefinitionSchema)
     .optional()
     .describe("Values that the workflow receives when it starts"),
   env: envSchema.describe(

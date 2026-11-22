@@ -1,0 +1,34 @@
+fsl 5
+// refine: emit-step-events.fsl step-progress.fsl
+//
+// The progress events of a step keep the requirements of its progress: output only between the
+// start and the end, and one end whose mark matches how the step turned out.
+refinement EmitStepEventsRefinesStepProgress {
+  impl EmitStepEvents
+  abs StepProgress
+
+  map steprun_stage[s: StepRun] =
+    if phase[s] == Ready then Pending
+    else if phase[s] == Busy then Running
+    else if outcome[s] == Passed then Succeeded
+    else if outcome[s] == Broke then Failed
+    else Cancelled
+  map steprun_result[s: StepRun] =
+    if stopped[s] then Stopped else if fails[s] then Error else Ok
+  map steprun_mark[s: StepRun] =
+    if outcome[s] == Passed then Check
+    else if outcome[s] == Broke then Cross
+    else if outcome[s] == Halted then Square
+    else NoMark
+  // A cancelled step has a message too, but the CLI shows the reason only on the line of a failure.
+  map steprun_reasonShown[s: StepRun] = hasMessage[s] and outcome[s] == Broke
+
+  action begin(s, f, st, c) -> start(s, if st then Stopped else if f then Error else Ok)
+  action output(s) -> print(s)
+  action lateOutput(s) -> stutter
+  action returnsOk(s) -> succeed(s)
+  action throwsFailure(s) -> fail(s)
+  action returnsFailure(s) -> fail(s)
+  action throwsCancel(s) -> cancel(s)
+  action rest(s) -> stutter
+}

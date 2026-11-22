@@ -12,12 +12,7 @@ import { daemonPaths } from "./paths.ts";
 
 /** Opens the server of a command for a project without server options. */
 const open = async (root: string, output = createOutput(), detach = false) =>
-  openCommandServer(
-    { detach, version: "1.2.3" },
-    root,
-    { cwd: root, ...output },
-    new AbortController().signal,
-  );
+  openCommandServer({ detach, version: "1.2.3" }, root, { cwd: root, ...output });
 
 describe("connectDaemon", () => {
   let state: string;
@@ -100,7 +95,7 @@ describe("connectDaemon", () => {
       connectDaemon("/project", "1.2.3", { cwd: "/", ...output }),
     ).resolves.toMatchObject({
       project: { address: "127.0.0.1:7233", root: "/project", taskQueue: "ugoke-host-hash" },
-      server: { address: "127.0.0.1:7233", durable: true },
+      server: { address: "127.0.0.1:7233", options: "" },
     });
     expect(requests).toEqual([
       { body: "", method: "GET", url: "/status" },
@@ -113,7 +108,7 @@ describe("connectDaemon", () => {
     const output = createOutput();
 
     await expect(connectDaemon("/project", "1.2.3", { cwd: "/", ...output })).resolves.toEqual({
-      server: expect.objectContaining({ address: "127.0.0.1:7233", durable: true }) as unknown,
+      server: expect.objectContaining({ address: "127.0.0.1:7233", options: "" }) as unknown,
     });
     expect(output.written.stderr).toBe(
       'ugoke daemon: runs ugoke 0.9.0, and this is ugoke 1.2.3, so this command runs its own Worker. Run "ugoke daemon stop" and start it again to use it\n',
@@ -275,7 +270,6 @@ describe("connectDaemon", () => {
           { server: { address: "localhost:7233", type: "address" }, version: "1.2.3" },
           project("temporal.example.com:7233"),
           { cwd: "/", ...createOutput() },
-          new AbortController().signal,
         ),
       ).resolves.toMatchObject({ server: { address: "localhost:7233" } });
     });
