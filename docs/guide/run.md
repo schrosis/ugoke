@@ -114,6 +114,19 @@ deploy: answered approve. The run goes on in ugoke daemon
 
 オプションは、リファレンスの「[ugoke inbox](../reference/commands/inbox.md)」にあります。
 
+## 進み具合を見る
+
+切り離した実行の進み具合は、`ugoke log` で見られます。終わった実行も見られます。
+
+```console
+$ ugoke log deploy-8f2c… --tail 3
+│ > ./deploy.sh
+│ deployed
+✓ deploy  12.3s
+```
+
+実行が終わるまで見続けるときは、`--follow` を付けます。オプションは、リファレンスの「[ugoke log](../reference/commands/log.md)」にあります。
+
 ## 取り消す
 
 実行を止めるときは、`ugoke cancel` で取り消します。待機ステップの待ちと、実行中のスクリプトや AI を止めます。
