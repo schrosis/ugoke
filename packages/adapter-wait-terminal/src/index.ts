@@ -13,7 +13,7 @@ import input from "@inquirer/input";
 import select from "@inquirer/select";
 import { z } from "zod";
 
-import { enableKittyKeyboard, supportsKittyKeyboard } from "./keyboard.js";
+import { enableBracketedPaste, enableKittyKeyboard, supportsKittyKeyboard } from "./keyboard.js";
 import { multilinePrompt } from "./multiline.js";
 
 /** Options of the `terminal` wait method, as the `with` field of a step writes them. */
@@ -219,8 +219,8 @@ interface PromptContext {
 /**
  * Asks for an answer that can span lines in the terminal itself.
  *
- * Shift+Enter starts a new line only in a terminal with the kitty keyboard protocol, which is on
- * only while the prompt asks.
+ * Shift+Enter starts a new line only in a terminal with the kitty keyboard protocol. The protocol
+ * and bracketed paste are on only while the prompt asks.
  */
 const askMultiline = async (
   message: string,
@@ -230,7 +230,8 @@ const askMultiline = async (
   validate: (text: string) => string | true,
 ): Promise<string> => {
   const shiftEnter = await supportsKittyKeyboard(streams.input, streams.output);
-  const disable = shiftEnter ? enableKittyKeyboard(streams.output) : () => {};
+  const disableKeyboard = shiftEnter ? enableKittyKeyboard(streams.output) : () => {};
+  const disablePaste = enableBracketedPaste(streams.output);
   try {
     return await multilinePrompt(
       {
@@ -243,7 +244,8 @@ const askMultiline = async (
       context,
     );
   } finally {
-    disable();
+    disablePaste();
+    disableKeyboard();
   }
 };
 

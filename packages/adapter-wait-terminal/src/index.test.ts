@@ -492,13 +492,18 @@ describe("createTerminalPlugin with interactive prompts", () => {
       expect(received()).toContain("\u001B[<u");
     });
 
-    it("keeps the newlines of pasted text", async () => {
-      const { io, press } = createInteractiveTerminal();
+    it("keeps the newlines of pasted text while bracketed paste is on", async () => {
+      const { io, press, received } = createInteractiveTerminal();
       const answered = respondInteractively(io, multiline);
 
       await press("body", keys.pasteStart, "a\nb", keys.pasteEnd, keys.enter);
 
       await expect(answered).resolves.toEqual({ body: "a\nb" });
+      // The terminal marks pasted text only while bracketed paste is on.
+      expect(received().indexOf("\u001B[?2004h")).toBeGreaterThan(-1);
+      expect(received().indexOf("\u001B[?2004l")).toBeGreaterThan(
+        received().indexOf("\u001B[?2004h"),
+      );
     });
 
     it("joins a line with the line before on Backspace at its start", async () => {
@@ -511,8 +516,8 @@ describe("createTerminalPlugin with interactive prompts", () => {
       await expect(answered).resolves.toEqual({ body: "abc" });
     });
 
-    it("uses the default for an empty answer", async () => {
-      const { io, press } = createInteractiveTerminal();
+    it("uses the default for an empty answer, and shows it as the answer", async () => {
+      const { io, press, screen } = createInteractiveTerminal();
       const answered = respondInteractively(io, {
         message: "Describe",
         schema: { body: { default: "Fix", multiline: true, type: "string" } },
@@ -521,6 +526,7 @@ describe("createTerminalPlugin with interactive prompts", () => {
       await press("Fix", keys.enter);
 
       await expect(answered).resolves.toEqual({ body: "Fix" });
+      expect(screen()).toContain("Fix");
     });
 
     it("asks again for an empty required answer", async () => {

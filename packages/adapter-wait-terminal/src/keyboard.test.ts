@@ -2,7 +2,7 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import { enableKittyKeyboard, supportsKittyKeyboard } from "./keyboard.ts";
+import { enableBracketedPaste, enableKittyKeyboard, supportsKittyKeyboard } from "./keyboard.ts";
 
 /** A terminal that answers the queries that it receives with the given text. */
 const createTerminal = (answer: string | undefined, isTTY = true) => {
@@ -39,6 +39,13 @@ describe("supportsKittyKeyboard", () => {
     await expect(supportsKittyKeyboard(input, output)).resolves.toBe(false);
   });
 
+  it("gives back the keys that someone typed while it asked", async () => {
+    const { input, output } = createTerminal("x\u001B[?1uy\u001B[?62c");
+
+    await expect(supportsKittyKeyboard(input, output)).resolves.toBe(true);
+    expect(input.read()?.toString()).toBe("xy");
+  });
+
   it("is false for a terminal that answers nothing in time", async () => {
     const { input, output } = createTerminal(undefined);
 
@@ -62,6 +69,14 @@ describe("enableKittyKeyboard", () => {
     disable();
 
     expect(written()).toBe("\u001B[>1u\u001B[<u");
+  });
+
+  it("turns bracketed paste on, and off", () => {
+    const { output, written } = createTerminal(undefined);
+
+    enableBracketedPaste(output)();
+
+    expect(written()).toBe("\u001B[?2004h\u001B[?2004l");
   });
 
   it("turns the protocol off when the process exits", () => {

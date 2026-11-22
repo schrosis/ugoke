@@ -43,19 +43,22 @@ const startsNewLine = (key: RawKey): boolean =>
 const hintOf = (shiftEnter: boolean): string =>
   `Enter to submit. New line: ${shiftEnter ? "Shift+Enter, " : ""}Alt+Enter, or \\ then Enter`;
 
+/** The type of a prompt that answers with text, as `createPrompt` creates it. */
+type MultilinePrompt = ReturnType<typeof createPrompt<string, MultilineConfig>>;
+
 /**
  * Asks for text that can span lines, in the terminal itself.
  *
  * Enter submits the answer. Alt+Enter and a `\` at the end of the line start a new line, and so
- * does Shift+Enter when the terminal sends it apart from Enter. Pasted text keeps its newlines.
+ * does Shift+Enter when the terminal sends it apart from Enter. Pasted text keeps its newlines
+ * while bracketed paste is on.
  */
-/** The type of a prompt that answers with text, as `createPrompt` creates it. */
-type MultilinePrompt = ReturnType<typeof createPrompt<string, MultilineConfig>>;
-
 export const multilinePrompt: MultilinePrompt = createPrompt<string, MultilineConfig>(
   (config, done) => {
     const theme = makeTheme();
     const [status, setStatus] = useState<"done" | "idle">("idle");
+    // The answer after it is submitted, which can be the default.
+    const [answered, setAnswered] = useState("");
     // The lines before the one that the cursor is on.
     const [lines, setLines] = useState<readonly string[]>([]);
     // The line that the cursor is on. readline clears its own line on Enter, so it is kept here.
@@ -97,6 +100,7 @@ export const multilinePrompt: MultilinePrompt = createPrompt<string, MultilineCo
         const answer = text === "" && config.default !== undefined ? config.default : text;
         const valid = config.validate(answer);
         if (valid === true) {
+          setAnswered(answer);
           setStatus("done");
           done(answer);
           return;
@@ -120,9 +124,8 @@ export const multilinePrompt: MultilinePrompt = createPrompt<string, MultilineCo
 
     const message = theme.style.message(config.message, status);
     if (status === "done") {
-      const answer = [...lines, value].join("\n");
       return `${prefix} ${message}\n${theme.style.answer(
-        answer
+        answered
           .split("\n")
           .map((line) => `${indent}${line}`)
           .join("\n"),
