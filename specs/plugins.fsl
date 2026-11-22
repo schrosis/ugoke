@@ -28,7 +28,9 @@ fsl 5
 // MODEL-PLG-004: one name of an AI provider or a wait method in a definition is modeled. Whether
 //                a loaded plugin provides it, and whether an official plugin of ugoke would, are
 //                given when the definition is checked. The official plugins are
-//                @ugoke/adapter-ai-claude-code for claude-code.
+//                @ugoke/adapter-ai-claude-code for claude-code, and @ugoke/adapter-wait-github for
+//                github_pr (github-pr.fsl). A name that objects inherit, such as toString, is not
+//                an official one.
 requirements Plugins {
   enum Exit { Pending, Zero, One }
   actor User, Ugoke

@@ -30,6 +30,15 @@ ugoke のコマンドとファイルの形式を、項目ごとに引けるよ�
 
 AI エージェントなどのプログラムからコマンドを動かすときの出力は、「[プログラムから使う](from-ai.md)」にあります。
 
+## 待ち方
+
+[wait ステップ](workflow-definition.md#wait-ステップ)の待ち方です。
+
+| 待ち方                                        | 内容                                       |
+| --------------------------------------------- | ------------------------------------------ |
+| [`terminal`](workflow-definition.md#terminal) | ターミナルで人に聞く。ugoke に組み込みです |
+| [`github_pr`](wait-methods/github-pr.md)      | GitHub の pull request の出来事を待つ      |
+
 ## AI のプロバイダー
 
 [ai ステップ](workflow-definition.md#ai-ステップ)を実行するプロバイダーです。

@@ -3,7 +3,7 @@ fsl 5
 // resident process, also while no process follows the run.
 // Source: docs/explanation/architecture.md ("Worker"). A method declares respondIn: worker, which
 // the intermediate form of the step keeps. A method that answers in the process that follows the
-// run, such as terminal, is in wait-step.fsl.
+// run, such as terminal, is in wait-step.fsl. github_pr is such a method (github-pr.fsl).
 //
 // MODEL-WWT-001: one wait of such a step is modeled. Whether an answer comes from the method in the
 //                Worker or from outside, such as from ugoke inbox answer or the process that

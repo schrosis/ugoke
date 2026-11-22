@@ -1,0 +1,146 @@
+fsl 5
+// Requirements for the github_pr wait method, which waits in the Worker for an event of a pull
+// request on GitHub: which event ends the wait, and which errors it waits through. Its options
+// and its setting are in github-pr-options.fsl.
+// Source: docs/reference/wait-methods/github-pr.md
+//
+// MODEL-GHP-002: one check of the pull request is modeled. Its state, which events the step waits
+//                for, whether every named check completed, and whether a review that counts was
+//                submitted are given when it is read. Merged, closed, and the checks come from the
+//                state of the pull request now, so they answer at once when they happened before
+//                the wait started. Checks are matched by name with case. A check that has not
+//                appeared yet has not completed, nor has a commit status that is pending or
+//                expected. Every check of a name must complete, such as jobs of the same name in
+//                two workflows, and one that failed fails the name. A check run that ends in
+//                success, neutral, or skipped succeeded, and a commit status succeeded when its
+//                state is success; the others failed, and their names are answered in failedChecks
+//                in the order of checks.names, which is empty when none failed. occurredAt is when
+//                the pull request was merged or closed, when the last of the checks completed, or
+//                when the review was submitted. A review counts when it was submitted in or after
+//                the second that the step started to wait (worker-wait.fsl), its state is APPROVED,
+//                COMMENTED, or CHANGES_REQUESTED and in review.states, and its author is in
+//                review.authors, compared without case and without a [bot] suffix. Of the reviews
+//                that count, the one submitted first is answered.
+// MODEL-GHP-003: one read of the pull request is modeled, with what came of it. gh runs without a
+//                shell, in the environment of the Worker, with its own login. A run of gh that
+//                takes over a minute is a transient error, and an output that is too large is a
+//                fatal one. A transient error is checked again after an interval that doubles while
+//                errors continue, up to five minutes or the poll interval if it is longer. A rate
+//                limit is waited for until it resets and a second more, when it resets within an
+//                hour; otherwise it is waited for as a transient error. A rate limit that resets
+//                within an hour does not count as an error in a row. The resident process writes to
+//                its log while errors continue and when a read succeeds again (worker-wait.fsl).
+//                The last 100 reviews are read, and the author of a deleted account is ghost.
+//                Checks read while the head moves are left out until the next read.
+// MODEL-GHP-004: the method answers in the Worker (respondIn: worker), so ugoke inbox list does not
+//                show it, and ugoke inbox answer and a follower cannot answer it (worker-wait.fsl).
+//                An engine that does not tell when the step started to wait fails the step. The
+//                plugin is @ugoke/adapter-wait-github, which plugins.fsl names for github_pr.
+requirements GithubPr {
+  enum State { Open, Merged, Closed }
+  enum Outcome { Pending, AnsweredMerged, AnsweredClosed, AnsweredChecks, AnsweredReview, FailedStep, KeptWaiting }
+  enum Result { Snapshot, Transient, RateLimited, Fatal }
+  actor Worker, GitHub
+
+  entity Look {
+    state: State = Open
+    wantsMerged: Bool = false
+    wantsClosed: Bool = false
+    wantsChecks: Bool = false
+    checksDone: Bool = false
+    wantsReview: Bool = false
+    newReview: Bool = false
+    outcome: Outcome = Pending
+    lifecycle Unread -> Judged
+  }
+
+  entity Attempt {
+    result: Result = Snapshot
+    lifecycle Idle -> Tried -> Retried
+    lifecycle Tried -> Gave
+    lifecycle Tried -> Read
+  }
+
+  def judgeOf(s: State, m: Bool, c: Bool, wc: Bool, cd: Bool, wr: Bool, nr: Bool) =
+    if s == Merged then (if m then AnsweredMerged else FailedStep)
+    else if s == Closed then (if c then AnsweredClosed else FailedStep)
+    else if wc and cd then AnsweredChecks
+    else if wr and nr then AnsweredReview
+    else KeptWaiting
+
+  event judge = Worker judges Look with state, wantsMerged, wantsClosed, wantsChecks, checksDone, wantsReview, newReview (Unread -> Judged)
+    set outcome = judgeOf(input state, input wantsMerged, input wantsClosed, input wantsChecks, input checksDone, input wantsReview, input newReview)
+    covers REQ-GHP-001 "github_pr は、pull request のマージ、クローズ、チェックの完了、レビューを、Worker で待つ"
+  event try = GitHub answers Attempt with result (Idle -> Tried)
+    covers REQ-GHP-005 "通信や GitHub の一時的なエラーと、レート制限のあいだは、待って確かめ直す。gh がない、ログインしていない、pull request を読めないときは、ステップは失敗する"
+  event retry = Worker retries Attempt (Tried -> Retried)
+  event give = Worker gives Attempt (Tried -> Gave)
+  event read = Worker reads Attempt (Tried -> Read)
+
+  rule REQ-GHP-003 "出来事は、merged、closed、checks、review の順に確かめる。events にない merged や closed が起きると、ステップは失敗する" {
+    MergedEnds: always Look in Judged has state != Merged or outcome == AnsweredMerged or outcome == FailedStep
+    ClosedEnds: always Look in Judged has state != Closed or outcome == AnsweredClosed or outcome == FailedStep
+    UnwantedEndFails: always Look in Judged has not ((state == Merged and not wantsMerged) or (state == Closed and not wantsClosed)) or outcome == FailedStep
+    ChecksBeforeReview: always Look in Judged has not (state == Open and wantsChecks and checksDone) or outcome == AnsweredChecks
+  }
+  rule REQ-GHP-004 "checks は、checks.names のチェックがすべて終わると答える。review は、待ち始めたあとに出された、数えるレビューで答える" {
+    ChecksNeedAll: always Look in Judged has outcome != AnsweredChecks or (wantsChecks and checksDone)
+    ReviewNeedsNew: always Look in Judged has outcome != AnsweredReview or (wantsReview and newReview)
+  }
+  rule REQ-GHP-005 "通信や GitHub の一時的なエラーと、レート制限のあいだは、待って確かめ直す。gh がない、ログインしていない、pull request を読めないときは、ステップは失敗する" {
+    allow Worker retries Attempt only when result == Transient or result == RateLimited
+    allow Worker gives Attempt only when result == Fatal
+    allow Worker reads Attempt only when result == Snapshot
+  }
+
+  scenario AC-GHP-004 "マージされた pull request で、merged を答える" {
+    Worker judges l1 with state Merged, wantsMerged true, wantsClosed false, wantsChecks true, checksDone true, wantsReview true, newReview true
+    then l1.outcome == AnsweredMerged
+  }
+  scenario AC-GHP-005 "待っていないクローズは、ステップの失敗" {
+    Worker judges l1 with state Closed, wantsMerged true, wantsClosed false, wantsChecks false, checksDone false, wantsReview false, newReview false
+    then l1.outcome == FailedStep
+  }
+  scenario AC-GHP-006 "チェックが終われば、レビューより先に checks を答える" {
+    Worker judges l1 with state Open, wantsMerged false, wantsClosed false, wantsChecks true, checksDone true, wantsReview true, newReview true
+    then l1.outcome == AnsweredChecks
+  }
+  scenario AC-GHP-007 "新しいレビューで、review を答える" {
+    Worker judges l1 with state Open, wantsMerged false, wantsClosed false, wantsChecks true, checksDone false, wantsReview true, newReview true
+    then l1.outcome == AnsweredReview
+  }
+  scenario AC-GHP-008 "何も起きなければ、待ち続ける" {
+    Worker judges l1 with state Open, wantsMerged true, wantsClosed true, wantsChecks true, checksDone false, wantsReview true, newReview false
+    then l1.outcome == KeptWaiting
+  }
+  scenario AC-GHP-009 "一時的なエラーは、確かめ直す" {
+    GitHub answers a1 with result Transient
+    Worker retries a1
+    then a1 is Retried
+  }
+  scenario AC-GHP-010 "ログインしていなければ、ステップの失敗" {
+    GitHub answers a1 with result Fatal
+    Worker gives a1
+    then a1 is Gave
+  }
+
+  forbidden FB-GHP-007 "一時的なエラーで、ステップを失敗にしない" {
+    GitHub answers a1 with result Transient
+    Worker gives a1
+    then rejected
+  }
+  forbidden FB-GHP-008 "レート制限で、ステップを失敗にしない" {
+    GitHub answers a1 with result RateLimited
+    Worker gives a1
+    then rejected
+  }
+  forbidden FB-GHP-009 "直らないエラーを、確かめ直さない" {
+    GitHub answers a1 with result Fatal
+    Worker retries a1
+    then rejected
+  }
+}
+verify {
+  instances Look = 1
+  instances Attempt = 1
+}
