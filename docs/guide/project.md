@@ -2,7 +2,7 @@
 
 ## プロジェクトの構成
 
-ugoke のファイルは、プロジェクトのルートの `.ugoke` ディレクトリに置きます。
+ugoke のファイルは、プロジェクトのルートの `.ugoke` ディレクトリに置きます。`ugoke init` を実行すると、今のディレクトリに `.ugoke` を作ります（「[ugoke init](../reference/commands/init.md)」）。
 
 ```text
 my-project/                 プロジェクトのルート
