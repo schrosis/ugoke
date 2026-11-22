@@ -8,7 +8,8 @@ fsl 5
 //                written. The literals are strings in single quotes, where '' is one ', numbers
 //                such as -1 or 1.5, true, false, and null. || binds loosest, then &&, then == and
 //                !=, and then !. == and != compare two values, so a == b == c is an error. Which
-//                values it may reference is in step-references.fsl.
+//                values it may reference is in step-references.fsl. A call of a function, such as
+//                trim(outputs.verdict), is a value as a reference is (expression-functions.fsl).
 // MODEL-CND-004: missing tells whether a reference is null because it goes through null, reads
 //                an output of a step that did not run, or reads an env.<name> that is not set.
 //                unreadable tells whether a reference cannot be read otherwise, such as a field of
