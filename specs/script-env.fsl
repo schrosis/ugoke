@@ -13,12 +13,17 @@ fsl 5
 // MODEL-ENV-002: whether the dotenv file can be read inside the project root, and which of the
 //                dotenv file, the process, env of the workflow, and env of the step give a value
 //                for the name, are given when the step runs.
-// MODEL-ENV-003: values are not modeled. A number or a boolean in env becomes a string, as the
-//                reference says.
-// MODEL-ENV-004: the dotenv file is read each time a script runs, so a change of the file
-//                reaches the steps after it, and its values never enter the history of the run,
-//                while the values of env do. One run of a script is modeled, and the history is
-//                not.
+// MODEL-ENV-003: values are not modeled. A number or a boolean in env becomes a string as written,
+//                as the reference says. valueOk is false also for a number or a boolean whose text
+//                YAML reads differently, such as 1.10, 1.0, 00123, 0x1F, 0o17, 1e3, +1, -0, .5,
+//                .inf, .nan, an integer with too many digits, such as 12345678901234567890, True,
+//                TRUE, or False, in env of the workflow or of a step, because the parsed value no
+//                longer shows how it was written; a quoted value, a block scalar such as |-, and an
+//                expression are text as written; it is reported with the other errors of the
+//                definition, and the key is still checked (parse-definition.fsl).
+// MODEL-ENV-004: the dotenv file is read each time a script runs, so a change of the file reaches
+//                the steps after it, and its values never enter the history of the run, while the
+//                values of env do. One run of a script is modeled, and the history is not.
 requirements ScriptEnv {
   enum Source { NoValue, FromDotenv, FromProcess, FromWorkflow, FromStep }
   actor Author, Worker
@@ -53,7 +58,7 @@ requirements ScriptEnv {
   event run = Worker runs EnvVar with seen (Started -> Ran)
   event fail = Worker fails EnvVar (Started -> Failed)
 
-  rule REQ-ENV-002 "環境変数の名前は、英字か _ で始め、英字、数字、_ だけで書く。値は、文字列、数、真偽値で書く。dotenv は、プロジェクトのルートからの相対パスで、ルートの外に出ない" {
+  rule REQ-ENV-002 "環境変数の名前は、英字か _ で始め、英字、数字、_ だけで書く。値は、文字列、数、真偽値で書く。数と真偽値は、YAML が書いたのと同じ形に読むものだけを書ける。dotenv は、プロジェクトのルートからの相対パスで、ルートの外に出ない" {
     allow Worker accepts EnvVar only when nameOk and valueOk and pathOk(dotenvGiven, dotenvPathOk)
     allow Worker rejects EnvVar only when not (nameOk and valueOk and pathOk(dotenvGiven, dotenvPathOk))
     AcceptedIsOk: always EnvVar in Accepted has (nameOk and valueOk and pathOk(dotenvGiven, dotenvPathOk))
