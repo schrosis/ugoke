@@ -18,6 +18,8 @@ fsl 5
 //                a problem, even with --address.
 // MODEL-CFG-003: temporal.address names the Temporal Server of the project, which run-command.fsl
 //                (REQ-CMD-010) and daemon-projects.fsl use.
+// MODEL-CFG-004: $schema at the top of the file names a JSON Schema for editors. It is accepted
+//                and changes nothing (schema-command.fsl).
 requirements ProjectConfig {
   enum Exit { Pending, Zero, One }
   actor User, Ugoke

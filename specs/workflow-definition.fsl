@@ -16,6 +16,8 @@ fsl 5
 //                nor a list of branches with if and to, a maxVisits that is not a positive whole
 //                number, and a continueOnError that is not true or false. continueOnError on a
 //                wait step is an unknown field (continue-on-error.fsl).
+// MODEL-DEF-004: $schema at the top of a definition names a JSON Schema for editors. It is
+//                accepted and changes nothing (schema-command.fsl).
 requirements WorkflowDefinition {
   actor Author, Ugoke
 

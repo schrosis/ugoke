@@ -8,6 +8,7 @@ ugoke のファイルは、プロジェクトのルートの `.ugoke` ディレ�
 my-project/                 プロジェクトのルート
 ├── .ugoke/
 │   ├── config.yaml         プロジェクトの設定（なくてもよい）
+│   ├── schemas/            ugoke schema が作る JSON Schema
 │   └── workflows/          ワークフローの定義と、ugoke docs の文書
 │       ├── deploy.yaml     ワークフロー deploy
 │       └── release/
@@ -35,6 +36,17 @@ temporal:
 ```
 
 項目と決まりは、リファレンスの「[プロジェクトの設定](../reference/config.md)」にあります。
+
+## エディターで補完する
+
+`ugoke schema` で、定義と設定の JSON Schema を `.ugoke/schemas` に作れます。各ファイルの一番上に `$schema` を書くと、エディターが項目を補完します。
+
+```yaml
+$schema: ../schemas/workflow.schema.json
+version: v0.1
+```
+
+JSON Schema には、プロジェクトのプラグインの分も入ります。プラグインを変えたら、もう一度 `ugoke schema` を実行します。詳しくは、「[ugoke schema](../reference/commands/schema.md)」にあります。
 
 ## ワークフローの名前とファイル
 

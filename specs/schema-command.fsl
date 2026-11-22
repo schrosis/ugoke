@@ -1,0 +1,101 @@
+fsl 5
+// Requirements for ugoke schema: it writes the JSON Schemas of the workflow definitions and of the
+// configuration file of a project, with the extensions of the plugins that the project loads.
+// Source: docs/reference/commands/schema.md
+//
+// MODEL-SCH-001: one run of the command is modeled. Whether the project is found, whether its
+//                configuration file and its plugins load (project-config.fsl, plugins.fsl), and
+//                whether the files can be written, and whether they exist already are given when
+//                the command runs. The files are .ugoke/schemas/workflow.schema.json and
+//                .ugoke/schemas/config.schema.json, and the directory is created when it is
+//                missing.
+// MODEL-SCH-002: the JSON Schemas follow draft-07, which editors for YAML support widely. method
+//                and provider take only the names of the loaded wait methods and AI providers, and
+//                with follows the schema of each, or takes anything when its schema cannot be
+//                converted to JSON Schema. Without any, method or provider takes nothing, so an
+//                editor reports every name. A step must write with when the schema of its
+//                extension has required fields. The settings of each loaded plugin follow its
+//                config schema, or take anything when it cannot be converted, and a plugin without
+//                one takes none. $schema at the top of a definition or of the configuration file
+//                is accepted and changes nothing (workflow-definition.fsl, project-config.fsl).
+//                The JSON Schemas tell only the shape of the fields, so the transitions and the
+//                references of expressions are checked by ugoke validate (validate-command.fsl).
+// MODEL-SCH-003: after it writes both files, the command prints "wrote <file>" for each to standard
+//                output, with the path relative to the directory where it runs. On a failure, it
+//                prints the reason to standard error, and a file written before stays.
+requirements SchemaCommand {
+  enum Exit { Pending, Zero, One }
+  actor User, Ugoke
+
+  entity SchemaRun {
+    projectFound: Bool = false
+    pluginsLoad: Bool = false
+    writable: Bool = false
+    existing: Bool = false
+    written: Bool = false
+    exitCode: Exit = Pending
+    lifecycle Typed -> Started -> Done
+    lifecycle Started -> Failed
+  }
+
+  event type = User types SchemaRun with projectFound, pluginsLoad, writable, existing (Typed -> Started)
+    covers REQ-SCH-001 "ugoke schema は、ワークフローの定義とプロジェクトの設定の JSON Schema を、プロジェクトのプラグインの分も含めて .ugoke/schemas に作る"
+  event write = Ugoke writes SchemaRun (Started -> Done)
+    set written = true, exitCode = Zero
+  event fail = Ugoke fails SchemaRun (Started -> Failed)
+    set exitCode = One
+
+  rule REQ-SCH-002 "すでにあるファイルは、毎回書き直す" {
+    allow Ugoke writes SchemaRun only when projectFound and pluginsLoad and writable
+    DoneIsWritten: always SchemaRun in Done has written and exitCode == Zero
+  }
+  rule REQ-SCH-003 "プロジェクトが見つからない、設定に問題がある、プラグインを読み込めない、ファイルを書けないときは、1 で終わる" {
+    allow Ugoke fails SchemaRun only when not (projectFound and pluginsLoad and writable)
+    FailedExitsOne: always SchemaRun in Failed has exitCode == One
+  }
+
+  scenario AC-SCH-001 "プロジェクトの JSON Schema を作る" {
+    User types r1 with projectFound true, pluginsLoad true, writable true, existing false
+    Ugoke writes r1
+    then stage(r1) == Done and r1.exitCode == Zero
+  }
+  scenario AC-SCH-002 "プロジェクトの外では、1 で終わる" {
+    User types r1 with projectFound false, pluginsLoad false, writable false, existing false
+    Ugoke fails r1
+    then stage(r1) == Failed and r1.exitCode == One
+  }
+  scenario AC-SCH-003 "プラグインを読み込めなければ、1 で終わる" {
+    User types r1 with projectFound true, pluginsLoad false, writable true, existing false
+    Ugoke fails r1
+    then r1 is Failed
+  }
+
+  scenario AC-SCH-004 "すでにあるファイルを書き直す" {
+    User types r1 with projectFound true, pluginsLoad true, writable true, existing true
+    Ugoke writes r1
+    then stage(r1) == Done and r1.written
+  }
+  forbidden FB-SCH-004 "すでにあるからといって、失敗しない" {
+    User types r1 with projectFound true, pluginsLoad true, writable true, existing true
+    Ugoke fails r1
+    then rejected
+  }
+  forbidden FB-SCH-001 "プラグインを読み込めないのに、作らない" {
+    User types r1 with projectFound true, pluginsLoad false, writable true, existing false
+    Ugoke writes r1
+    then rejected
+  }
+  forbidden FB-SCH-002 "作れるのに、失敗しない" {
+    User types r1 with projectFound true, pluginsLoad true, writable true, existing false
+    Ugoke fails r1
+    then rejected
+  }
+  forbidden FB-SCH-003 "書けないのに、作ったことにしない" {
+    User types r1 with projectFound true, pluginsLoad true, writable false, existing false
+    Ugoke writes r1
+    then rejected
+  }
+}
+verify {
+  instances SchemaRun = 1
+}
