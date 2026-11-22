@@ -25,6 +25,17 @@ fsl 5
 // MODEL-CCD-005: the provider comes from the plugin @ugoke/adapter-ai-claude-code, which a project
 //                names in plugins of .ugoke/config.yaml. Without it, provider: claude-code is an
 //                error of the definition that tells which package to install (plugins.fsl).
+// MODEL-CCD-006: whether with names an agent, and whether Claude Code knows it, are given when the
+//                step starts. Claude Code reads the agents from where it reads its settings, such
+//                as ~/.claude/agents and .claude/agents of the project, because the provider does
+//                not limit the sources of the settings. It tells the agents that it knows in its
+//                first message, and runs its default agent without an error when it does not know
+//                the named one, so the provider stops it and fails the step. A first message
+//                without the agents is taken as not knowing the agent. The agent is named again
+//                when a session is continued (session: reuse). With an agent, the step uses the
+//                system prompt of Claude Code, so that the prompt of the agent applies, and a model
+//                that the agent names takes precedence over model of the step. The tools of the
+//                agent still need allowedTools or the settings (REQ-CCD-003).
 requirements ClaudeCode {
   enum Block { TextBlock, ToolBlock, OtherBlock }
   actor Author, Ugoke, Claude
@@ -33,10 +44,13 @@ requirements ClaudeCode {
     optionsOk: Bool = false
     allowed: Bool = false
     inUgoke: Bool = false
+    agentNamed: Bool = false
+    agentKnown: Bool = false
     succeeded: Bool = false
     hasResult: Bool = false
     lifecycle Unwritten -> Written -> Accepted -> Running -> Done
     lifecycle Written -> Invalid
+    lifecycle Accepted -> Failed
     lifecycle Running -> Running
     lifecycle Running -> Failed
   }
@@ -58,8 +72,10 @@ requirements ClaudeCode {
     covers REQ-CCD-001 "claude-code は、ai ステップを Claude Code で実行する"
   event accept = Ugoke accepts ClaudeStep (Written -> Accepted)
   event reject = Ugoke rejects ClaudeStep (Written -> Invalid)
-  event start = Claude starts ClaudeStep (Accepted -> Running)
+  event start = Claude starts ClaudeStep with agentNamed, agentKnown (Accepted -> Running)
     covers REQ-CCD-001 "claude-code は、ai ステップを Claude Code で実行する"
+  event miss = Ugoke misses ClaudeStep with agentNamed, agentKnown (Accepted -> Failed)
+    covers REQ-CCD-007 "agent を書けば、そのエージェントがステップを動かす。Claude Code がそのエージェントを知らなければ、Claude Code を止めて、ステップは失敗する"
   event use = Claude uses ClaudeStep with allowed, inUgoke (Running -> Running)
   event deny = Claude denies ClaudeStep with allowed, inUgoke (Running -> Running)
   event finish = Claude finishes ClaudeStep with succeeded, hasResult (Running -> Done)
@@ -70,7 +86,7 @@ requirements ClaudeCode {
   event show = Ugoke shows ProgressBlock with shortened (Arrived -> Shown)
   event skip = Ugoke skips ProgressBlock (Arrived -> Skipped)
 
-  rule REQ-CCD-002 "with は allowedTools と maxBudgetUsd だけを書ける。allowedTools は空でない文字列の一覧、maxBudgetUsd は正の数" {
+  rule REQ-CCD-002 "with は agent、allowedTools、maxBudgetUsd だけを書ける。agent は空でない文字列、allowedTools は空でない文字列の一覧、maxBudgetUsd は正の数" {
     allow Ugoke accepts ClaudeStep only when optionsOk
     allow Ugoke rejects ClaudeStep only when not optionsOk
   }
@@ -81,6 +97,10 @@ requirements ClaudeCode {
   rule REQ-CCD-004 "Claude Code が失敗したときと、結果を返さずに終わったときは、ステップは失敗する。schema があるのに、その形の結果がないときも同じ" {
     allow Claude finishes ClaudeStep only when input succeeded and input hasResult
     allow Claude fails ClaudeStep only when not (input succeeded and input hasResult)
+  }
+  rule REQ-CCD-007 "agent を書けば、そのエージェントがステップを動かす。Claude Code がそのエージェントを知らなければ、Claude Code を止めて、ステップは失敗する" {
+    allow Claude starts ClaudeStep only when not input agentNamed or input agentKnown
+    allow Ugoke misses ClaudeStep only when input agentNamed and not input agentKnown
   }
   rule REQ-CCD-005 "進み具合として、AI の文の最初の行と、使ったツールの名前と対象を表示する。サブエージェントのものは表示しない" {
     allow Ugoke shows ProgressBlock only when showable(kind, blank, fromSubagent)
@@ -94,7 +114,7 @@ requirements ClaudeCode {
   scenario AC-CCD-001 "許したツールを使って、結果を返して終わる" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
-    Claude starts s1
+    Claude starts s1 with agentNamed false, agentKnown false
     Claude uses s1 with allowed true, inUgoke false
     Claude finishes s1 with succeeded true, hasResult true
     then s1 is Done
@@ -102,14 +122,14 @@ requirements ClaudeCode {
   scenario AC-CCD-002 "許していないツールは断って、続ける" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
-    Claude starts s1
+    Claude starts s1 with agentNamed false, agentKnown false
     Claude denies s1 with allowed false, inUgoke false
     then s1 is Running
   }
   scenario AC-CCD-003 "結果を返さずに終わると、失敗する" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
-    Claude starts s1
+    Claude starts s1 with agentNamed false, agentKnown false
     Claude fails s1 with succeeded true, hasResult false
     then s1 is Failed
   }
@@ -132,35 +152,35 @@ requirements ClaudeCode {
   forbidden FB-CCD-001 "許していないツールを、使わせない" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
-    Claude starts s1
+    Claude starts s1 with agentNamed false, agentKnown false
     Claude uses s1 with allowed false, inUgoke false
     then rejected
   }
   forbidden FB-CCD-002 "許したツールでも、.ugoke の中を編集させない" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
-    Claude starts s1
+    Claude starts s1 with agentNamed false, agentKnown false
     Claude uses s1 with allowed true, inUgoke true
     then rejected
   }
   forbidden FB-CCD-003 "許したツールを、断らない" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
-    Claude starts s1
+    Claude starts s1 with agentNamed false, agentKnown false
     Claude denies s1 with allowed true, inUgoke false
     then rejected
   }
   forbidden FB-CCD-004 "Claude Code が失敗したのに、成功にしない" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
-    Claude starts s1
+    Claude starts s1 with agentNamed false, agentKnown false
     Claude finishes s1 with succeeded false, hasResult true
     then rejected
   }
   forbidden FB-CCD-005 "結果がないのに、成功にしない" {
     Author writes s1 with optionsOk true
     Ugoke accepts s1
-    Claude starts s1
+    Claude starts s1 with agentNamed false, agentKnown false
     Claude finishes s1 with succeeded true, hasResult false
     then rejected
   }
@@ -187,6 +207,37 @@ requirements ClaudeCode {
   forbidden FB-CCD-010 "ツールの使用を、表示し忘れない" {
     Claude sends b1 with kind ToolBlock, blank false, fromSubagent false, long false
     Ugoke skips b1
+    then rejected
+  }
+  scenario AC-CCD-007 "Claude Code が知っているエージェントで動かす" {
+    Author writes s1 with optionsOk true
+    Ugoke accepts s1
+    Claude starts s1 with agentNamed true, agentKnown true
+    Claude finishes s1 with succeeded true, hasResult true
+    then s1 is Done
+  }
+  scenario AC-CCD-008 "Claude Code が知らないエージェントは、ステップの失敗" {
+    Author writes s1 with optionsOk true
+    Ugoke accepts s1
+    Ugoke misses s1 with agentNamed true, agentKnown false
+    then s1 is Failed
+  }
+  forbidden FB-CCD-011 "知らないエージェントで、動かさない" {
+    Author writes s1 with optionsOk true
+    Ugoke accepts s1
+    Claude starts s1 with agentNamed true, agentKnown false
+    then rejected
+  }
+  forbidden FB-CCD-012 "知っているエージェントを、失敗にしない" {
+    Author writes s1 with optionsOk true
+    Ugoke accepts s1
+    Ugoke misses s1 with agentNamed true, agentKnown true
+    then rejected
+  }
+  forbidden FB-CCD-013 "agent がないのに、失敗にしない" {
+    Author writes s1 with optionsOk true
+    Ugoke accepts s1
+    Ugoke misses s1 with agentNamed false, agentKnown false
     then rejected
   }
 }
