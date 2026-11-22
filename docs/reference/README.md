@@ -7,6 +7,7 @@ ugoke のコマンドとファイルの形式を、項目ごとに引けるよ�
 | コマンド                                 | 内容                                         |
 | ---------------------------------------- | -------------------------------------------- |
 | [`ugoke`](commands/ugoke.md)             | 全体のオプションと終了ステータス             |
+| [`ugoke init`](commands/init.md)         | プロジェクトを作る                           |
 | [`ugoke run`](commands/run.md)           | ワークフローを実行する                       |
 | [`ugoke validate`](commands/validate.md) | ワークフローの定義を検証する                 |
 | [`ugoke docs`](commands/docs.md)         | ワークフローのつながりを図にした文書を作る   |

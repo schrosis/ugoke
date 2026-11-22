@@ -4,6 +4,8 @@
 
 ## 準備
 
+まだプロジェクトがなければ、`ugoke init` で作ります。試すためのワークフロー `hello` も作ります（「[プロジェクトとワークフローのファイル](project.md)」）。
+
 ワークフローは、Temporal Server の上で実行します。ふだんは、常駐プロセスを 1 度起動しておきます。常駐プロセスが、Temporal Server を起動し、ワークフローのステップを実行します。仕組みは「[アーキテクチャ](../explanation/architecture.md)」で説明します。
 
 ```console
