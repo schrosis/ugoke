@@ -482,9 +482,10 @@ describe("ugoke", () => {
         }
         throw new Error(`The step did not wait for visit ${visit}`);
       };
+      const { runId } = await handle.describe();
       const answerStep = async (visit: number, again: boolean) =>
         handle.executeUpdate(answerUpdateName, {
-          args: [{ step: "ask", values: { again }, visit }],
+          args: [{ runId, step: "ask", values: { again }, visit, workflowId: handle.workflowId }],
         });
 
       await waitForVisit(0);

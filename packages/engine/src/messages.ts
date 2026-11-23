@@ -38,12 +38,24 @@ export interface WaitingStep {
   startedAt?: string | undefined;
 }
 
-/** Argument of the answer update. */
+/**
+ * Argument of the answer update.
+ *
+ * It names the run, the step, and the visit that it is for. An answer is encrypted as a whole, so
+ * someone who copies one from the history cannot make another run, step, or visit accept it.
+ */
 export interface Answer {
+  /** Workflow ID of the run that the answer is for, so that it cannot answer another run. */
+  workflowId: string;
+  /**
+   * Run ID of the run that the answer is for. The server assigns it, so the answer cannot answer a
+   * run that someone starts again with the same workflow ID.
+   */
+  runId: string;
   /** ID of the step that the answer is for, so that an old answer cannot answer a later step. */
   step: string;
   /** Visit of the step that the answer is for, so that it cannot answer a later visit. */
-  visit?: number | undefined;
+  visit: number;
   /** Values of the answers, keyed by name. Defaults are applied by the workflow. */
   values: Readonly<Record<string, unknown>>;
 }

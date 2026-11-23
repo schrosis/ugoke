@@ -27,6 +27,13 @@ fsl 5
 //                that someone without the key starts never runs a step, and an activity that such
 //                a run schedules never runs. Authenticated encryption proves that a value comes
 //                from someone who holds the key, but a value from the history can be sent again.
+//                An answer to a wait step names its run, its step, and its visit, and the run
+//                refuses an answer that names another, so a copy of an answer answers nothing
+//                else. The run is named with its workflow ID and its run ID, which the server
+//                assigns, so a run that someone starts again with the same workflow ID refuses
+//                the copy too. Without --visit, the command reads the visit that waits and names
+//                it.
+//                Other values, such as the input that starts a run, can still be sent again.
 //                The message and the stack trace of a failure are encrypted as a value, so a
 //                run without the key cannot read why a Worker refused its activity.
 //                What Temporal keeps beside the values stays readable: the workflow ID, which has
