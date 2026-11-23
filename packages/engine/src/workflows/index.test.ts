@@ -12,6 +12,7 @@ import { createActivities } from "../activities/index.ts";
 import type { ScriptStepRequest } from "../activities/index.ts";
 import { answerUpdateName, waitingQueryName } from "../messages.ts";
 import type { WaitingStep } from "../messages.ts";
+import { heartbeatOptions } from "../run.ts";
 import { ugoke } from "./index.ts";
 
 const step = (run: string, next: string | null): Intermediate["steps"][string] => ({
@@ -635,6 +636,48 @@ describe("ugoke", () => {
       ]);
     });
   }, 60_000);
+
+  it("stops a running script soon after the workflow is cancelled, as a Worker of ugoke does", async () => {
+    const taskQueue = randomUUID();
+    const { promise: startedScript, resolve: started } = Promise.withResolvers<void>();
+    const { promise: abortedScript, resolve: aborted } = Promise.withResolvers<void>();
+    const worker = await Worker.create({
+      // The interval of the heartbeats is the default, as in a Worker of ugoke.
+      activities: createActivities({
+        scriptRunner: {
+          run: async (_request, { signal }): Promise<ScriptResult> =>
+            new Promise((_resolve, reject) => {
+              signal.addEventListener("abort", () => {
+                aborted();
+                reject(signal.reason);
+              });
+              started();
+            }),
+        },
+      }),
+      connection: environment.nativeConnection,
+      ...heartbeatOptions,
+      taskQueue,
+      workflowsPath: fileURLToPath(new URL("./index.ts", import.meta.url)),
+    });
+
+    await worker.runUntil(async () => {
+      const handle = await environment.client.workflow.start(ugoke, {
+        args: [intermediate],
+        taskQueue,
+        workflowId: randomUUID(),
+      });
+      await startedScript;
+      // A Worker sends the first heartbeat at once, and holds back the ones that follow. The
+      // cancellation comes after the first, so that it shows whether they are held back.
+      await sleep(6000);
+      const cancelledAt = Date.now();
+      await handle.cancel();
+      await abortedScript;
+      // Without the options, the script would go on for 11 seconds.
+      expect(Date.now() - cancelledAt).toBeLessThan(8000);
+    });
+  }, 90_000);
 
   it("passes output values to later steps", async () => {
     const { requests, result } = await run(
