@@ -54,7 +54,7 @@ describe("connectDaemon", () => {
   const serve = async (
     version: string,
     projectAddress = "127.0.0.1:7233",
-    reported: { projects?: unknown[]; workflowCodeVersion?: number } = {},
+    reported: { projects?: unknown[]; stopping?: boolean; workflowCodeVersion?: number } = {},
   ): Promise<void> => {
     const paths = daemonPaths();
     mkdirSync(paths.directory, { recursive: true });
@@ -75,6 +75,7 @@ describe("connectDaemon", () => {
                   projects: reported.projects ?? [],
                   serverOptions: "",
                   startedAt: "",
+                  ...(reported.stopping === true ? { stopping: true } : {}),
                   version,
                   workflowCodeVersion: reported.workflowCodeVersion ?? workflowCodeVersion,
                 }
@@ -101,6 +102,19 @@ describe("connectDaemon", () => {
       { body: "", method: "GET", url: "/status" },
       { body: JSON.stringify({ root: "/project" }), method: "POST", url: "/projects" },
     ]);
+  });
+
+  it("does not register the project with a resident process that is stopping", async () => {
+    await serve("1.2.3", undefined, { stopping: true });
+    const context = { cwd: "/", ...createOutput() };
+
+    await expect(connectDaemon("/project", "1.2.3", context)).rejects.toThrow(
+      'ugoke daemon is stopping. Run "ugoke daemon start" after it stopped, choose a server with --address, or set temporal.address in .ugoke/config.yaml',
+    );
+    await expect(connectDaemon("/project", "1.2.3", context, { detach: true })).rejects.toThrow(
+      'ugoke daemon is stopping, and --detach needs it to run the steps. Run "ugoke daemon start" after it stopped',
+    );
+    expect(requests.map(({ url }) => url)).toEqual(["/status", "/status"]);
   });
 
   it("runs its own Worker on its server when the resident process has another version", async () => {
@@ -236,6 +250,20 @@ describe("connectDaemon", () => {
         servedTaskQueue: undefined,
       });
       expect(output.written.stderr).toContain("runs ugoke 0.9.0, and this is ugoke 1.2.3");
+    });
+
+    it("runs its own Worker when the resident process is stopping, and says why", async () => {
+      await serve("1.2.3", "temporal.example.com:7233", { stopping: true });
+      const output = createOutput();
+
+      await expect(open(project("temporal.example.com:7233"), output)).resolves.toMatchObject({
+        server: { address: "temporal.example.com:7233" },
+        servedTaskQueue: undefined,
+      });
+      expect(output.written.stderr).toBe(
+        'ugoke daemon: is stopping, so this command runs its own Worker. Run "ugoke daemon start" after it stopped\n',
+      );
+      expect(requests.map(({ url }) => url)).toEqual(["/status"]);
     });
 
     it("says nothing when no resident process runs", async () => {

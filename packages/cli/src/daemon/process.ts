@@ -16,7 +16,7 @@ import { ensureTemporalCli, startDevServer } from "../temporal-cli/index.js";
 import { getDaemonStatus } from "./client.js";
 import type { DaemonStatus } from "./client.js";
 import { checkSocketPath, daemonPaths } from "./paths.js";
-import { createProjectWorkers } from "./workers.js";
+import { createProjectWorkers, WorkersStoppedError } from "./workers.js";
 import type { ProjectWorkers } from "./workers.js";
 
 /** Options of {@link runDaemon}. */
@@ -181,6 +181,9 @@ export const runDaemon = async (
   let opened: ResidentServer | undefined;
   let workers: ProjectWorkers | undefined;
   const http = createServer();
+  // It answers until it has stopped, so that commands can tell that it stops from that it does
+  // not run.
+  const stopping = new AbortController();
   try {
     // A socket that a stopped process left behind would keep the server from listening.
     if ((await getDaemonStatus(paths)) === undefined) {
@@ -194,7 +197,6 @@ export const runDaemon = async (
       writeFileSync(paths.devServer, `${opened.pid}\n`, { mode: 0o600 });
     }
 
-    const stopping = new AbortController();
     signal.addEventListener("abort", () => stopping.abort(), { once: true });
     const address = opened.address;
     workers = createProjectWorkers({
@@ -213,6 +215,7 @@ export const runDaemon = async (
       projects: projects.list(),
       serverOptions: opened?.options ?? "",
       startedAt,
+      ...(stopping.signal.aborted ? { stopping: true } : {}),
       version,
       workflowCodeVersion,
     });
@@ -223,6 +226,10 @@ export const runDaemon = async (
         respond(response, 200, undefined);
         stopping.abort();
       } else if (incoming.method === "POST" && incoming.url === "/projects") {
+        if (stopping.signal.aborted) {
+          respond(response, 503, { error: "ugoke daemon is stopping" });
+          return;
+        }
         void readJson(incoming)
           .then(async (body) => {
             const root =
@@ -234,6 +241,11 @@ export const runDaemon = async (
             respond(response, 200, await projects.add(await realpath(root)));
           })
           .catch((error: unknown) => {
+            // The request to stop came while this one was read.
+            if (error instanceof WorkersStoppedError) {
+              respond(response, 503, { error: error.message });
+              return;
+            }
             respond(response, 400, {
               error: error instanceof Error ? error.message : String(error),
             });
@@ -263,13 +275,15 @@ export const runDaemon = async (
     log(context, `ugoke daemon: failed: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   } finally {
+    stopping.abort();
+    // The Workers stop after the scripts that they run finish, so that the runs can continue.
+    // That can take long, and the socket stays until then.
+    await workers?.stopAll();
     await new Promise<void>((resolve) => {
       http.close(() => resolve());
       http.closeAllConnections();
     });
     rmSync(paths.socket, { force: true });
-    // The Workers stop after the scripts that they run finish, so that the runs can continue.
-    await workers?.stopAll();
     await opened?.stop();
     rmSync(paths.devServer, { force: true });
     lock.release();

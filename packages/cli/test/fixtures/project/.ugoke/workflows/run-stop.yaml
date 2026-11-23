@@ -1,0 +1,7 @@
+version: v0.1
+start: build
+steps:
+  build:
+    type: script
+    run: sleep 8 && echo built
+    next: end

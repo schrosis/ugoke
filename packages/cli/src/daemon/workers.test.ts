@@ -7,7 +7,7 @@ import { workflowCodeVersion } from "@ugoke/engine";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { projectTaskQueue } from "../state.ts";
-import { createProjectWorkers } from "./workers.ts";
+import { createProjectWorkers, WorkersStoppedError } from "./workers.ts";
 
 const succeed = async () => ({ stop: async () => {} });
 
@@ -282,6 +282,30 @@ describe("createProjectWorkers", () => {
     expect(workers.list()).toMatchObject([{ running: true }]);
     await workers.stopAll();
     expect(stopped).toEqual([1]);
+  });
+
+  it("adds no project after it was asked to stop", async () => {
+    const workers = create(succeed);
+    await workers.stopAll();
+
+    await expect(workers.add(project)).rejects.toThrow(new WorkersStoppedError());
+    expect(started).toEqual([]);
+  });
+
+  it("stops the Worker of a request that came just before it was asked to stop", async () => {
+    const stops: string[] = [];
+    const workers = create(async ({ taskQueue }) => ({
+      stop: async () => {
+        stops.push(taskQueue);
+      },
+    }));
+
+    // The Worker starts only after the request read the configuration file.
+    const added = workers.add(project);
+    await workers.stopAll();
+
+    await expect(added).resolves.toMatchObject({ root: project });
+    expect(stops).toEqual([projectTaskQueue(project)]);
   });
 
   it("starts the Worker again when the settings of a plugin change", async () => {

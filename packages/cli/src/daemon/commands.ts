@@ -63,6 +63,9 @@ const isAlive = (pid: number): boolean => {
   }
 };
 
+/** What a resident process that was asked to stop does until it stops. */
+const waitsForSteps = "waits for the steps that it runs to finish";
+
 const describe = ({ address, pid, version }: DaemonStatus): string =>
   `pid ${pid}, server ${address}, ugoke ${version}`;
 
@@ -79,6 +82,12 @@ export const startDaemon = async (
   checkSocketPath(paths.socket);
   const requested = server === undefined ? [] : serverArguments(server);
   const running = await getDaemonStatus(paths);
+  if (running?.stopping === true) {
+    context.stderr(
+      `ugoke daemon: is stopping (pid ${running.pid}), and ${waitsForSteps}. Run "ugoke daemon start" again after it stopped\n`,
+    );
+    return 1;
+  }
   if (running !== undefined) {
     context.stdout(`ugoke daemon: already running (${describe(running)})\n`);
     const notes = differences(running, version, requested);
@@ -142,12 +151,16 @@ export const stopDaemon = async (context: CommandContext): Promise<number> => {
     context.stdout("ugoke daemon: not running\n");
     return 0;
   }
-  await requestDaemonStop(paths);
+  // One that already stops is waited for as well, so that the command ends with 0 only when it
+  // stopped.
+  if (status.stopping !== true) {
+    await requestDaemonStop(paths);
+  }
   const deadline = Date.now() + waitTimeoutMs;
   while (isAlive(status.pid)) {
     if (Date.now() > deadline) {
       context.stderr(
-        `ugoke daemon: did not stop within ${waitTimeoutMs / 1000} seconds (pid ${status.pid})\n`,
+        `ugoke daemon: did not stop within ${waitTimeoutMs / 1000} seconds (pid ${status.pid}). It ${waitsForSteps}, and stops after them\n`,
       );
       return 1;
     }
@@ -160,13 +173,19 @@ export const stopDaemon = async (context: CommandContext): Promise<number> => {
 /**
  * Shows the state of the resident process of this host.
  *
- * @returns The exit code of the command: 0 when it runs, and 1 when it does not.
+ * @returns The exit code of the command: 0 when it runs, and 1 when it does not or is stopping.
  */
 export const showDaemonStatus = async (context: CommandContext): Promise<number> => {
   const paths = daemonPaths();
   const status = await getDaemonStatus(paths);
   if (status === undefined) {
     context.stdout("ugoke daemon: not running\n");
+    return 1;
+  }
+  if (status.stopping === true) {
+    context.stdout(
+      `ugoke daemon: stopping (${describe(status)})\nIt ${waitsForSteps}, and takes no new run\nlog: ${paths.log}\n`,
+    );
     return 1;
   }
   context.stdout(
