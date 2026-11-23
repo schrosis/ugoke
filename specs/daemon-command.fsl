@@ -10,6 +10,12 @@ fsl 5
 //                is short enough, and whether a resident process that was killed left its socket
 //                or development server. A resident process that exits before it answers, such as
 //                when its development server cannot start, does not answer in time.
+// MODEL-DMN-002: a resident process that was asked to stop waits for the steps that it runs to
+//                finish, which has no limit, and answers until it has stopped. Whether the one
+//                that runs is stopping is given when the command is typed. It takes no project
+//                while it stops, so a command that needs it ends with 1 and tells to start it
+//                after it stopped, and a command of a project that names its server runs its own
+//                Worker. stop asks it to stop only once, and waits for it either way.
 requirements DaemonCommand {
   enum Verb { StartVerb, StopVerb, StatusVerb }
   enum Exit { Pending, Zero, One }
@@ -22,6 +28,7 @@ requirements DaemonCommand {
     inTime: Bool = false
     socketOk: Bool = false
     leftover: Bool = false
+    stopping: Bool = false
     cleaned: Bool = false
     started: Bool = false
     warned: Bool = false
@@ -29,7 +36,7 @@ requirements DaemonCommand {
     lifecycle Untyped -> Typed -> Done
   }
 
-  event type = User types DaemonCall with verb, running, sameSettings, inTime, socketOk, leftover (Untyped -> Typed)
+  event type = User types DaemonCall with verb, running, sameSettings, inTime, socketOk, leftover, stopping (Untyped -> Typed)
     covers REQ-DMN-001 "ugoke daemon は、常駐プロセスを起動、停止し、状態を表示する"
   event launch = Ugoke launches DaemonCall with cleaned (Typed -> Done)
     set started = true, exitCode = Zero
@@ -45,7 +52,7 @@ requirements DaemonCommand {
 
   rule REQ-DMN-002 "常駐プロセスはホストに 1 つだけ。すでに動いていれば、start は新しく起動せずに 0 で終わり、バージョンやサーバーのオプションが違えばそのことを表示する" {
     allow Ugoke launches DaemonCall only when verb == StartVerb and not running and inTime and socketOk
-    allow Ugoke reuses DaemonCall only when verb == StartVerb and running and input warned == not sameSettings
+    allow Ugoke reuses DaemonCall only when verb == StartVerb and running and not stopping and input warned == not sameSettings
     NoSecondDaemon: always DaemonCall in Done has not (running and started)
   }
   rule REQ-DMN-003 "start は、60 秒たっても常駐プロセスが答えなければ、1 で終わる。stop は、60 秒たっても止まらなければ、1 で終わる" {
@@ -55,106 +62,150 @@ requirements DaemonCommand {
     allow Ugoke stops DaemonCall only when verb == StopVerb and (not running or inTime)
   }
   rule REQ-DMN-007 "ソケットのパスが 103 バイトを超えるときは、起動せずに 1 で終わる" {
-    allow Ugoke rejects DaemonCall only when verb == StartVerb and not socketOk
+    allow Ugoke rejects DaemonCall only when verb == StartVerb and (not socketOk or (running and stopping))
+  }
+  rule REQ-DMN-009 "止まる途中の常駐プロセスがあるとき、start は起動せずに 1 で終わり、status は止まる途中と表示して 1 で終わる。stop は、止まるまで待つ" {
+    StoppingIsNotReused: always DaemonCall in Done has not (verb == StartVerb and running and stopping and exitCode == Zero)
+    StoppingIsNotRunning: always DaemonCall in Done has not (verb == StatusVerb and running and stopping and exitCode == Zero)
   }
   rule REQ-DMN-008 "起動するときは、強制終了した常駐プロセスが残したソケットと開発サーバーを片付ける" {
     allow Ugoke launches DaemonCall only when input cleaned == leftover
     LeftoverIsCleaned: always DaemonCall in Done has (not started or cleaned == leftover)
   }
-  rule REQ-DMN-005 "status は、動いていれば 0、動いていなければ 1 で終わる" {
-    allow Ugoke reports DaemonCall only when verb == StatusVerb and input exitCode == (if running then Zero else One)
+  rule REQ-DMN-005 "status は、動いていれば 0、動いていないか、止まる途中なら 1 で終わる" {
+    allow Ugoke reports DaemonCall only when verb == StatusVerb and input exitCode == (if running and not stopping then Zero else One)
     DoneHasExit: always DaemonCall in Done has exitCode != Pending
   }
 
   scenario AC-DMN-001 "動いていなければ、起動する" {
-    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover false
+    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover false, stopping false
     Ugoke launches d1 with cleaned false
     then d1 is Done
   }
   scenario AC-DMN-002 "設定の違う常駐プロセスが動いていれば、そのことを表示して 0 で終わる" {
-    User types d1 with verb StartVerb, running true, sameSettings false, inTime true, socketOk true, leftover false
+    User types d1 with verb StartVerb, running true, sameSettings false, inTime true, socketOk true, leftover false, stopping false
     Ugoke reuses d1 with warned true
     then d1 is Done
   }
   scenario AC-DMN-003 "答えない常駐プロセスは、1 で終わる" {
-    User types d1 with verb StartVerb, running false, sameSettings false, inTime false, socketOk true, leftover false
+    User types d1 with verb StartVerb, running false, sameSettings false, inTime false, socketOk true, leftover false, stopping false
     Ugoke givesUp d1
     then d1 is Done
   }
   scenario AC-DMN-004 "動いていない常駐プロセスの stop は、0 で終わる" {
-    User types d1 with verb StopVerb, running false, sameSettings false, inTime false, socketOk true, leftover false
+    User types d1 with verb StopVerb, running false, sameSettings false, inTime false, socketOk true, leftover false, stopping false
     Ugoke stops d1
     then d1 is Done
   }
   scenario AC-DMN-005 "止まらない常駐プロセスの stop は、1 で終わる" {
-    User types d1 with verb StopVerb, running true, sameSettings false, inTime false, socketOk true, leftover false
+    User types d1 with verb StopVerb, running true, sameSettings false, inTime false, socketOk true, leftover false, stopping false
     Ugoke givesUp d1
     then d1 is Done
   }
   scenario AC-DMN-006 "動いていない常駐プロセスの status は、1 で終わる" {
-    User types d1 with verb StatusVerb, running false, sameSettings false, inTime false, socketOk true, leftover false
+    User types d1 with verb StatusVerb, running false, sameSettings false, inTime false, socketOk true, leftover false, stopping false
     Ugoke reports d1 with exitCode One
     then d1 is Done
   }
 
+  scenario AC-DMN-009 "止まる途中の常駐プロセスがあるとき、start は 1 で終わる" {
+    User types d1 with verb StartVerb, running true, sameSettings true, inTime true, socketOk true, leftover false, stopping true
+    Ugoke rejects d1
+    then d1.exitCode == One and not d1.started
+  }
+  scenario AC-DMN-010 "止まる途中の常駐プロセスの status は、1 で終わる" {
+    User types d1 with verb StatusVerb, running true, sameSettings false, inTime true, socketOk true, leftover false, stopping true
+    Ugoke reports d1 with exitCode One
+    then d1 is Done
+  }
+  scenario AC-DMN-011 "止まる途中の常駐プロセスの stop は、止まるのを待って 0 で終わる" {
+    User types d1 with verb StopVerb, running true, sameSettings false, inTime true, socketOk true, leftover false, stopping true
+    Ugoke stops d1
+    then d1.exitCode == Zero
+  }
+  scenario AC-DMN-012 "止まる途中の常駐プロセスが 60 秒で止まらなければ、stop は 1 で終わる" {
+    User types d1 with verb StopVerb, running true, sameSettings false, inTime false, socketOk true, leftover false, stopping true
+    Ugoke givesUp d1
+    then d1.exitCode == One
+  }
   scenario AC-DMN-008 "残っていた開発サーバーを片付けて、起動する" {
-    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover true
+    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover true, stopping false
     Ugoke launches d1 with cleaned true
     then d1 is Done
   }
 
   forbidden FB-DMN-001 "動いているのに、もう 1 つ起動しない" {
-    User types d1 with verb StartVerb, running true, sameSettings true, inTime true, socketOk true, leftover false
+    User types d1 with verb StartVerb, running true, sameSettings true, inTime true, socketOk true, leftover false, stopping false
     Ugoke launches d1 with cleaned false
     then rejected
   }
   forbidden FB-DMN-002 "設定が違うのに、黙って使わない" {
-    User types d1 with verb StartVerb, running true, sameSettings false, inTime true, socketOk true, leftover false
+    User types d1 with verb StartVerb, running true, sameSettings false, inTime true, socketOk true, leftover false, stopping false
     Ugoke reuses d1 with warned false
     then rejected
   }
   forbidden FB-DMN-003 "設定が同じなのに、違うと表示しない" {
-    User types d1 with verb StartVerb, running true, sameSettings true, inTime true, socketOk true, leftover false
+    User types d1 with verb StartVerb, running true, sameSettings true, inTime true, socketOk true, leftover false, stopping false
     Ugoke reuses d1 with warned true
     then rejected
   }
   forbidden FB-DMN-004 "動いていない常駐プロセスの status を、0 にしない" {
-    User types d1 with verb StatusVerb, running false, sameSettings false, inTime false, socketOk true, leftover false
+    User types d1 with verb StatusVerb, running false, sameSettings false, inTime false, socketOk true, leftover false, stopping false
     Ugoke reports d1 with exitCode Zero
     then rejected
   }
   forbidden FB-DMN-005 "動いている常駐プロセスの status を、1 にしない" {
-    User types d1 with verb StatusVerb, running true, sameSettings false, inTime true, socketOk true, leftover false
+    User types d1 with verb StatusVerb, running true, sameSettings false, inTime true, socketOk true, leftover false, stopping false
     Ugoke reports d1 with exitCode One
     then rejected
   }
+  forbidden FB-DMN-012 "止まる途中の常駐プロセスを、動いているものとして使わない" {
+    User types d1 with verb StartVerb, running true, sameSettings true, inTime true, socketOk true, leftover false, stopping true
+    Ugoke reuses d1 with warned false
+    then rejected
+  }
+  forbidden FB-DMN-013 "止まる途中の常駐プロセスがあるのに、もう 1 つ起動しない" {
+    User types d1 with verb StartVerb, running true, sameSettings true, inTime true, socketOk true, leftover false, stopping true
+    Ugoke launches d1 with cleaned false
+    then rejected
+  }
+  forbidden FB-DMN-014 "止まる途中の常駐プロセスの status を、0 にしない" {
+    User types d1 with verb StatusVerb, running true, sameSettings false, inTime true, socketOk true, leftover false, stopping true
+    Ugoke reports d1 with exitCode Zero
+    then rejected
+  }
+  forbidden FB-DMN-015 "動いている常駐プロセスの start を、止まる途中として断らない" {
+    User types d1 with verb StartVerb, running true, sameSettings true, inTime true, socketOk true, leftover false, stopping false
+    Ugoke rejects d1
+    then rejected
+  }
   forbidden FB-DMN-006 "止まらない常駐プロセスを、止めたことにしない" {
-    User types d1 with verb StopVerb, running true, sameSettings false, inTime false, socketOk true, leftover false
+    User types d1 with verb StopVerb, running true, sameSettings false, inTime false, socketOk true, leftover false, stopping false
     Ugoke stops d1
     then rejected
   }
   forbidden FB-DMN-007 "答えた常駐プロセスで、あきらめない" {
-    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover false
+    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover false, stopping false
     Ugoke givesUp d1
     then rejected
   }
   forbidden FB-DMN-008 "status で、起動しない" {
-    User types d1 with verb StatusVerb, running false, sameSettings false, inTime true, socketOk true, leftover false
+    User types d1 with verb StatusVerb, running false, sameSettings false, inTime true, socketOk true, leftover false, stopping false
     Ugoke launches d1 with cleaned false
     then rejected
   }
   forbidden FB-DMN-009 "ソケットのパスが長すぎるのに、起動しない" {
-    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk false, leftover false
+    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk false, leftover false, stopping false
     Ugoke launches d1 with cleaned false
     then rejected
   }
   forbidden FB-DMN-010 "残っていた開発サーバーを、片付けずに起動しない" {
-    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover true
+    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover true, stopping false
     Ugoke launches d1 with cleaned false
     then rejected
   }
   forbidden FB-DMN-011 "正しいオプションを、拒まない" {
-    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover false
+    User types d1 with verb StartVerb, running false, sameSettings false, inTime true, socketOk true, leftover false, stopping false
     Ugoke rejects d1
     then rejected
   }

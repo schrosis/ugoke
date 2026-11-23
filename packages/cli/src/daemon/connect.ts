@@ -13,16 +13,20 @@ export class DaemonUnavailableError extends Error {
   /**
    * @param detach Whether the command leaves the run to the resident process, so that no other
    *   server can run it.
+   * @param start What to do to have a resident process that runs.
    */
-  constructor(reason: string, detach = false) {
+  constructor(reason: string, detach = false, start = 'Run "ugoke daemon start"') {
     super(
       detach
-        ? `ugoke daemon ${reason}, and --detach needs it to run the steps. Run "ugoke daemon start"`
-        : `ugoke daemon ${reason}. Run "ugoke daemon start", choose a server with --address, or set temporal.address in .ugoke/config.yaml`,
+        ? `ugoke daemon ${reason}, and --detach needs it to run the steps. ${start}`
+        : `ugoke daemon ${reason}. ${start}, choose a server with --address, or set temporal.address in .ugoke/config.yaml`,
     );
     this.name = "DaemonUnavailableError";
   }
 }
+
+/** What to do about a resident process that was asked to stop and still runs steps. */
+const startAfterStop = 'Run "ugoke daemon start" after it stopped';
 
 /** Options that tell what the command needs from the resident process. */
 export interface DaemonUse {
@@ -118,6 +122,9 @@ export const connectDaemon = async (
   if (status === undefined) {
     throw new DaemonUnavailableError("is not running", use.detach);
   }
+  if (status.stopping === true) {
+    throw new DaemonUnavailableError("is stopping", use.detach, startAfterStop);
+  }
   const server: OpenedServer = {
     address: status.address,
     // Later commands find the resident process again by themselves.
@@ -177,6 +184,10 @@ const daemonOn = async (
         `ugoke daemon: is not running, ${withoutDaemon(use)}. Run "ugoke daemon start"\n`,
       );
     }
+    return {};
+  }
+  if (status.stopping === true) {
+    context.stderr(`ugoke daemon: is stopping, ${withoutDaemon(use)}. ${startAfterStop}\n`);
     return {};
   }
   if (status.version !== version || status.workflowCodeVersion !== workflowCodeVersion) {

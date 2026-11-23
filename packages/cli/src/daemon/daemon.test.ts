@@ -78,9 +78,10 @@ describe("ugoke daemon", () => {
     rmSync(state, { force: true, recursive: true });
   });
 
-  const execute = async (args: string[]) =>
+  const execute = async (args: string[], cwd?: string) =>
     new Promise<{ exitCode: number | null; stdout: string; stderr: string }>((resolve) => {
       const child = spawn(process.execPath, [bin, ...args], {
+        cwd,
         env: { ...process.env, XDG_CACHE_HOME: cacheHome(), XDG_STATE_HOME: state },
       });
       let stdout = "";
@@ -191,6 +192,55 @@ describe("ugoke daemon", () => {
 
     const status = await execute(["daemon", "status"]);
     expect(status.stdout).toContain(`projects:\n  ${realpathSync(fixtureProject)}\n`);
+  }, 60_000);
+
+  it("tells that it is stopping while it waits for a running step", async () => {
+    await start();
+    await expect(execute(["run", "run-stop", "--detach"], fixtureProject)).resolves.toMatchObject({
+      exitCode: 0,
+    });
+    const started = '"step":"build","type":"stepStarted"';
+    for (let attempt = 0; attempt < 100 && !runEvents().includes(started); attempt += 1) {
+      await sleep(100);
+    }
+    expect(runEvents()).toContain(started);
+
+    // The resident process stops after the script, which goes on for some seconds.
+    const stopped = execute(["daemon", "stop"]);
+    let status = await execute(["daemon", "status"]);
+    for (let attempt = 0; attempt < 50 && !status.stdout.includes("stopping"); attempt += 1) {
+      await sleep(100);
+      status = await execute(["daemon", "status"]);
+    }
+    expect(status).toMatchObject({ exitCode: 1, stderr: "" });
+    expect(status.stdout).toMatch(
+      /^ugoke daemon: stopping \(pid \d+, server 127\.0\.0\.1:\d+, ugoke \d+\.\d+\.\d+\)\nIt waits for the steps that it runs to finish, and takes no new run\nlog: .+\n$/u,
+    );
+
+    const [startedAgain, run, stoppedAgain] = await Promise.all([
+      start(),
+      execute(["run", "run-success"], fixtureProject),
+      execute(["daemon", "stop"]),
+    ]);
+    expect(startedAgain).toMatchObject({ exitCode: 1, stdout: "" });
+    expect(startedAgain.stderr).toMatch(
+      /^ugoke daemon: is stopping \(pid \d+\), and waits for the steps that it runs to finish\. Run "ugoke daemon start" again after it stopped\n$/u,
+    );
+    expect(run).toEqual({
+      exitCode: 1,
+      stderr:
+        'run-success: failed: ugoke daemon is stopping. Run "ugoke daemon start" after it stopped, choose a server with --address, or set temporal.address in .ugoke/config.yaml\n',
+      stdout: "",
+    });
+    // Both commands end once it stopped, and the script finished before that.
+    const stops = { exitCode: 0, stderr: "", stdout: "ugoke daemon: stopped\n" };
+    expect(stoppedAgain).toEqual(stops);
+    await expect(stopped).resolves.toEqual(stops);
+    expect(runEvents()).toContain('"outcome":"succeeded","step":"build","type":"stepFinished"');
+    await expect(execute(["daemon", "status"])).resolves.toMatchObject({
+      exitCode: 1,
+      stdout: "ugoke daemon: not running\n",
+    });
   }, 60_000);
 
   it("warns when the running process uses other options", async () => {

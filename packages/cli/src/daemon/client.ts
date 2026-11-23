@@ -17,6 +17,11 @@ export interface DaemonStatus {
   /** Workflow code version of the resident process. */
   workflowCodeVersion: number;
   startedAt: string;
+  /**
+   * Whether it was asked to stop. It then waits for the steps that it runs to finish, and takes no
+   * project.
+   */
+  stopping?: boolean | undefined;
   /** Projects that the resident process serves. */
   projects: DaemonProject[];
 }
