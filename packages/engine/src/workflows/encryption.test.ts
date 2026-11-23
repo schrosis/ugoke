@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 
 import { intermediateVersion } from "@ugoke/core";
 import type { Intermediate, ScriptRequest } from "@ugoke/core";
@@ -88,6 +89,40 @@ describe("ugoke with encryption", () => {
     expect(requests).toHaveLength(1);
   }, 60_000);
 
+  it("fails a workflow without leaving the message of the failure in the history", async () => {
+    const taskQueue = randomUUID();
+    const worker = await Worker.create({
+      activities: createActivities({
+        scriptRunner: {
+          run: async () => {
+            throw new Error("secret-failure");
+          },
+        },
+      }),
+      connection: environment.nativeConnection,
+      taskQueue,
+      workflowsPath,
+      ...workerDataConverter(key),
+    });
+    const client = new Client({
+      connection: environment.connection,
+      ...clientDataConverter(key),
+    });
+
+    await worker.runUntil(async () => {
+      const handle = await client.workflow.start(ugoke, {
+        args: [intermediate],
+        taskQueue,
+        workflowId: randomUUID(),
+      });
+      const failure: unknown = await handle.result().catch((error: unknown) => error);
+      expect(inspect(failure, { depth: 10 })).toContain("secret-failure");
+      const history = JSON.stringify(await handle.fetchHistory());
+      expect(history).not.toContain("secret-failure");
+      expect(history).not.toContain("encryption.test.ts");
+    });
+  }, 60_000);
+
   it("lists its own runs while runs of another key are on the server", async () => {
     const otherKey = randomBytes(32);
     const start = async (encryptionKey: Uint8Array, project: string): Promise<string> => {
@@ -161,6 +196,8 @@ describe("ugoke with encryption", () => {
               },
             ],
             taskQueue: attackQueue,
+            // The refusal is encrypted, so the workflow of the attacker cannot read it and waits.
+            workflowExecutionTimeout: "3 seconds",
             workflowId: randomUUID(),
           }),
         ).rejects.toThrow();

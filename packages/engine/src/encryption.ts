@@ -1,4 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { DataConverter, Payload, PayloadCodec } from "@temporalio/common";
 
@@ -133,19 +135,33 @@ export const createEncryptionCodec = (
   };
 };
 
+const modulePath = fileURLToPath(import.meta.url);
+
+/**
+ * Path of the file that exports the failure converter. It has the extension of this file, which
+ * is `.js` once built.
+ */
+const failureConverterPath = join(dirname(modulePath), `failure-converter${extname(modulePath)}`);
+
+/**
+ * Returns a data converter that encrypts values, and the messages and stack traces of failures,
+ * with the codec.
+ */
+const encrypting = (codec: PayloadCodec): { dataConverter: DataConverter } => ({
+  dataConverter: { failureConverterPath, payloadCodecs: [codec] },
+});
+
 /** Returns the options that make a Worker accept only values encrypted with the key. */
 export const workerDataConverter = (
   key: Uint8Array | undefined,
 ): { dataConverter?: DataConverter } =>
-  key === undefined ? {} : { dataConverter: { payloadCodecs: [createEncryptionCodec(key)] } };
+  key === undefined ? {} : encrypting(createEncryptionCodec(key));
 
 /** Returns the options that make a client encrypt with the key. */
 export const clientDataConverter = (
   key: Uint8Array | undefined,
 ): { dataConverter?: DataConverter } =>
-  key === undefined
-    ? {}
-    : { dataConverter: { payloadCodecs: [createEncryptionCodec(key, { allowPlaintext: true })] } };
+  key === undefined ? {} : encrypting(createEncryptionCodec(key, { allowPlaintext: true }));
 
 /** Returns the options that make a client read the memos of runs that others started. */
 export const listingDataConverter = (
@@ -153,10 +169,4 @@ export const listingDataConverter = (
 ): { dataConverter?: DataConverter } =>
   key === undefined
     ? {}
-    : {
-        dataConverter: {
-          payloadCodecs: [
-            createEncryptionCodec(key, { allowPlaintext: true, nullWhenUnreadable: true }),
-          ],
-        },
-      };
+    : encrypting(createEncryptionCodec(key, { allowPlaintext: true, nullWhenUnreadable: true }));

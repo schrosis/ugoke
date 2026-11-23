@@ -27,9 +27,11 @@ fsl 5
 //                that someone without the key starts never runs a step, and an activity that such
 //                a run schedules never runs. Authenticated encryption proves that a value comes
 //                from someone who holds the key, but a value from the history can be sent again.
+//                The message and the stack trace of a failure are encrypted as a value, so a
+//                run without the key cannot read why a Worker refused its activity.
 //                What Temporal keeps beside the values stays readable: the workflow ID, which has
-//                the name of the workflow, the messages of failures, and the names of the types
-//                and task queues, such as the sticky queue of a Worker with the host name.
+//                the name of the workflow, and the names of the types and task queues, such as
+//                the sticky queue of a Worker with the host name.
 // MODEL-ENC-003: one run on the server is modeled when the runs of a project are listed. A client
 //                reads values that are not encrypted, such as the memos of runs from before the
 //                encryption, and reads a memo of another key as null, which then matches no
