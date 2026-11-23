@@ -9,7 +9,7 @@ import { NativeConnection, Worker } from "@temporalio/worker";
 
 import { createActivities } from "./activities/index.js";
 import { workerDataConverter } from "./encryption.js";
-import { workflowsPath } from "./run.js";
+import { heartbeatOptions, workflowsPath } from "./run.js";
 
 /** Options of {@link startWorker}. */
 export interface StartWorkerOptions {
@@ -82,6 +82,7 @@ export const startWorker = async ({
         stopping: stopping.signal,
       }),
       ...workerDataConverter(encryptionKey),
+      ...heartbeatOptions,
       connection,
       namespace,
       // Stopping waits for running scripts, as when a run detaches.

@@ -32,6 +32,16 @@ import type { ugoke } from "./workflows/index.js";
 
 const discardEvents: EventSink = { emit: () => {} };
 
+/**
+ * Worker options that let a cancellation reach a running step soon.
+ *
+ * Temporal tells an activity that it is cancelled in the answer to a heartbeat. A Worker holds
+ * heartbeats back for most of the heartbeat timeout by default, which would keep a cancelled
+ * script or AI running for tens of seconds. With this limit, each heartbeat of an activity is
+ * sent, so the cancellation arrives within the interval of the heartbeats.
+ */
+export const heartbeatOptions = { maxHeartbeatThrottleInterval: "1 second" } as const;
+
 /** Path of the built workflow code that a Worker bundles. */
 export const workflowsPath = fileURLToPath(new URL("./workflows.js", import.meta.url));
 
@@ -224,6 +234,7 @@ const follow = async (
           stopping: stopping.signal,
         }),
         ...workerDataConverter(encryptionKey),
+        ...heartbeatOptions,
         connection: connections.worker,
         namespace,
         shutdownGraceTime: detachGraceTime,
