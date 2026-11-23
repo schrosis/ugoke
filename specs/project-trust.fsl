@@ -1,0 +1,239 @@
+fsl 5
+// Requirements for trusting a project: a command reads the files of a project only after the
+// user trusted its root, when someone can answer.
+// Source: docs/reference/trust.md, docs/guide/project.md ("プロジェクトを信頼する")
+//
+// MODEL-TRU-001: one run of a command in one project is modeled. The root is the nearest directory
+//                with .ugoke (project-files.fsl). Whether the command is ugoke init, whether
+//                someone can answer, whether the root is in the trust record, whether a directory
+//                above the root is in it, and whether the record can be written are given when the
+//                command runs.
+// MODEL-TRU-002: someone can answer when the command runs without --from-ai and standard input and
+//                the stream of the question are terminals. Otherwise nobody can, such as with
+//                --from-ai, a pipe, or CI.
+// MODEL-TRU-003: reading stands for everything that a command takes from the project: the
+//                configuration file, the definitions, and the plugins, which run in the process
+//                of ugoke (plugins.fsl). The commands are run, attach, cancel, inbox, log,
+//                validate, docs, and schema. ugoke daemon start, stop, and status read no project,
+//                so they never ask.
+// MODEL-TRU-004: a record that cannot be read has no root. Nobody removes a root from the record
+//                but the user, who edits its file, so a run never removes one. The content of a
+//                trusted project can change, and ugoke does not ask again.
+// MODEL-TRU-005: the resident process does not look at the record: it serves each project that a
+//                command registers, and restores them when it starts (daemon-projects.fsl).
+// MODEL-TRU-006: ugoke init is modeled after it created the project (init-command.fsl). An init
+//                that fails adds nothing. An init that cannot write the record prints the reason
+//                and still ends with 0, and the next command asks.
+// MODEL-TRU-007: the record is trusted-projects.json in the state directory
+//                (state-directory.fsl), a JSON array of the real paths of the roots, so a root
+//                that is reached through a symbolic link is the same root. The question goes to
+//                standard error, and Enter alone answers no.
+requirements ProjectTrust {
+  enum Answer { NoAnswer, Yes, No, Closed, CtrlC }
+  enum Exit { Pending, GoesOn, One, Interrupted }
+  actor User, Ugoke
+
+  entity Command {
+    isInit: Bool = false
+    answerable: Bool = false
+    trusted: Bool = false
+    aboveTrusted: Bool = false
+    writable: Bool = false
+    answer: Answer = NoAnswer
+    recorded: Bool = false
+    read: Bool = false
+    exitCode: Exit = Pending
+    lifecycle Typed -> Started -> Asking -> Answered -> Reading
+    lifecycle Started -> Reading
+    lifecycle Started -> Initialized
+    lifecycle Answered -> Declined
+    lifecycle Answered -> Stopped
+    lifecycle Answered -> Unsaved
+  }
+
+  event type = User runs Command with isInit, answerable, trusted, aboveTrusted, writable (Typed -> Started)
+    set recorded = input trusted
+    covers REQ-TRU-001 "答えられる場面で、信頼の記録にないルートのコマンドは、プロジェクトのファイルを読む前に、そのフォルダーを信頼するかを聞く"
+  event ask = Ugoke asks Command (Started -> Asking)
+  event pass = Ugoke passes Command (Started -> Reading)
+    set read = true, exitCode = GoesOn
+  event initialize = Ugoke initializes Command (Started -> Initialized)
+    set recorded = true, exitCode = GoesOn
+  event reply = User answers Command with answer (Asking -> Answered)
+  event trust = Ugoke trusts Command (Answered -> Reading)
+    set recorded = true, read = true, exitCode = GoesOn
+  event decline = Ugoke declines Command (Answered -> Declined)
+    set exitCode = One
+  event stop = Ugoke stops Command (Answered -> Stopped)
+    set exitCode = Interrupted
+  event fail = Ugoke fails Command (Answered -> Unsaved)
+    set exitCode = One
+
+  rule REQ-TRU-001 "答えられる場面で、信頼の記録にないルートのコマンドは、プロジェクトのファイルを読む前に、そのフォルダーを信頼するかを聞く" {
+    allow Ugoke asks Command only when not isInit and answerable and not trusted
+    StartedKeepsRecord: always Command in Started has not read and recorded == trusted and exitCode == Pending
+    AskedBeforeReading: always Command in Asking has not read and not recorded and answer == NoAnswer and exitCode == Pending
+    AnsweredBeforeReading: always Command in Answered has not read and not recorded and answer != NoAnswer and exitCode == Pending
+  }
+  rule REQ-TRU-002 "信頼の記録にあるルートでは、聞かずに続ける。上のフォルダーの信頼は、中のルートに効かない" {
+    allow Ugoke passes Command only when not isInit and (trusted or not answerable)
+    ReadOnlyTrusted: always Command in Reading has read and (recorded or not answerable) and exitCode == GoesOn
+    TrustedStaysRecorded: always Command in Reading has trusted => recorded
+  }
+  rule REQ-TRU-003 "誰も答えられない場面では、聞かずに続け、信頼の記録を変えない" {
+    UnansweredKeepsRecord: always Command in Reading has answerable or recorded == trusted
+  }
+  rule REQ-TRU-004 "はいと答えると、ルートを信頼の記録に足して、コマンドを続ける" {
+    allow User answers Command only when input answer != NoAnswer
+    allow Ugoke trusts Command only when answer == Yes and writable
+    TrustedIsRecorded: always Command in Reading has answer == Yes => recorded
+  }
+  rule REQ-TRU-005 "いいえと答えるか、答える前に入力が閉じると、何も読まずに 1 で終わる。信頼の記録は変えない" {
+    allow Ugoke declines Command only when answer == No or answer == Closed
+    DeclinedReadsNothing: always Command in Declined has not read and not recorded and exitCode == One
+  }
+  rule REQ-TRU-006 "Ctrl+C を押すと、何も読まずに 130 で終わる。信頼の記録は変えない" {
+    allow Ugoke stops Command only when answer == CtrlC
+    StoppedReadsNothing: always Command in Stopped has not read and not recorded and exitCode == Interrupted
+  }
+  rule REQ-TRU-007 "信頼の記録に書けないときは、何も読まずに 1 で終わる" {
+    allow Ugoke fails Command only when answer == Yes and not writable
+    UnsavedReadsNothing: always Command in Unsaved has not read and not recorded and exitCode == One
+  }
+  rule REQ-TRU-008 "ugoke init は、作ったプロジェクトのルートを、聞かずに信頼の記録に足す" {
+    allow Ugoke initializes Command only when isInit
+    InitializedIsRecorded: always Command in Initialized has recorded and not read and exitCode == GoesOn
+  }
+
+  scenario AC-TRU-001 "初めてのプロジェクトで、はいと答えると続く" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer Yes
+    Ugoke trusts c1
+    then stage(c1) == Reading and c1.recorded and c1.read and c1.exitCode == GoesOn
+  }
+  scenario AC-TRU-002 "信頼したプロジェクトでは、聞かれない" {
+    User runs c1 with isInit false, answerable true, trusted true, aboveTrusted false, writable true
+    Ugoke passes c1
+    then stage(c1) == Reading and c1.read
+  }
+  scenario AC-TRU-003 "いいえと答えると、1 で終わる" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer No
+    Ugoke declines c1
+    then stage(c1) == Declined and not c1.read and not c1.recorded and c1.exitCode == One
+  }
+  scenario AC-TRU-004 "答える前に入力が閉じると、1 で終わる" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer Closed
+    Ugoke declines c1
+    then stage(c1) == Declined and c1.exitCode == One
+  }
+  scenario AC-TRU-005 "Ctrl+C を押すと、130 で終わる" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer CtrlC
+    Ugoke stops c1
+    then stage(c1) == Stopped and not c1.read and not c1.recorded and c1.exitCode == Interrupted
+  }
+  scenario AC-TRU-006 "誰も答えられない場面では、信頼していなくても続き、記録は増えない" {
+    User runs c1 with isInit false, answerable false, trusted false, aboveTrusted false, writable true
+    Ugoke passes c1
+    then stage(c1) == Reading and c1.read and not c1.recorded
+  }
+  scenario AC-TRU-007 "ugoke init は、聞かずに信頼する" {
+    User runs c1 with isInit true, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke initializes c1
+    then stage(c1) == Initialized and c1.recorded
+  }
+  scenario AC-TRU-008 "誰も答えられない場面の ugoke init も、信頼する" {
+    User runs c1 with isInit true, answerable false, trusted false, aboveTrusted false, writable true
+    Ugoke initializes c1
+    then stage(c1) == Initialized and c1.recorded
+  }
+  scenario AC-TRU-009 "信頼の記録に書けないと、1 で終わる" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable false
+    Ugoke asks c1
+    User answers c1 with answer Yes
+    Ugoke fails c1
+    then stage(c1) == Unsaved and not c1.read and c1.exitCode == One
+  }
+
+  forbidden FB-TRU-001 "信頼していないプロジェクトを、聞かずに読まない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke passes c1
+    then rejected
+  }
+  forbidden FB-TRU-002 "上のフォルダーを信頼していても、中のルートを聞かずに読まない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted true, writable true
+    Ugoke passes c1
+    then rejected
+  }
+  forbidden FB-TRU-003 "信頼したプロジェクトで、聞かない" {
+    User runs c1 with isInit false, answerable true, trusted true, aboveTrusted false, writable true
+    Ugoke asks c1
+    then rejected
+  }
+  forbidden FB-TRU-004 "誰も答えられない場面で、聞かない" {
+    User runs c1 with isInit false, answerable false, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    then rejected
+  }
+  forbidden FB-TRU-005 "いいえと答えたのに、続けない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer No
+    Ugoke trusts c1
+    then rejected
+  }
+  forbidden FB-TRU-006 "Ctrl+C を、いいえとして扱わない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer CtrlC
+    Ugoke declines c1
+    then rejected
+  }
+  forbidden FB-TRU-007 "はいと答えたのに、断らない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer Yes
+    Ugoke declines c1
+    then rejected
+  }
+  forbidden FB-TRU-008 "信頼の記録に書けないのに、続けない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable false
+    Ugoke asks c1
+    User answers c1 with answer Yes
+    Ugoke trusts c1
+    then rejected
+  }
+  forbidden FB-TRU-009 "ugoke init では、聞かない" {
+    User runs c1 with isInit true, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    then rejected
+  }
+  forbidden FB-TRU-010 "ugoke init でないコマンドは、聞かずに信頼の記録に足さない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke initializes c1
+    then rejected
+  }
+  forbidden FB-TRU-011 "いいえを、Ctrl+C として扱わない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer No
+    Ugoke stops c1
+    then rejected
+  }
+  forbidden FB-TRU-012 "信頼の記録に書けるのに、書けないことにしない" {
+    User runs c1 with isInit false, answerable true, trusted false, aboveTrusted false, writable true
+    Ugoke asks c1
+    User answers c1 with answer Yes
+    Ugoke fails c1
+    then rejected
+  }
+}
+verify {
+  instances Command = 1
+}

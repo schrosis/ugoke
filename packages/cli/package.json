@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@commander-js/extra-typings": "^15.0.0",
+    "@inquirer/confirm": "catalog:",
     "@ugoke/adapter-event-log-file": "workspace:*",
     "@ugoke/adapter-script-local": "workspace:*",
     "@ugoke/adapter-wait-terminal": "workspace:*",

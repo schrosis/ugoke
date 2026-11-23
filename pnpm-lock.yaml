@@ -339,6 +339,9 @@ importers:
       '@commander-js/extra-typings':
         specifier: ^15.0.0
         version: 15.1.0(commander@15.1.0)
+      '@inquirer/confirm':
+        specifier: 'catalog:'
+        version: 6.4.0(@types/node@26.6.6)
       '@ugoke/adapter-event-log-file':
         specifier: workspace:*
         version: link:../adapter-event-log-file

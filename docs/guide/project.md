@@ -26,6 +26,23 @@ ugoke は、コマンドを実行したディレクトリから上へたどり�
 No .ugoke directory found in /home/user/scratch or its parents
 ```
 
+## プロジェクトを信頼する
+
+初めて使うプロジェクトでは、ugoke がファイルを読む前に、信頼するかを聞きます。
+
+```text
+? Do you trust the files in /home/user/my-project? ugoke reads its configuration and runs its plugins and scripts as you (y/N)
+```
+
+`y` と答えると、コマンドを続けます。次からは聞きません。`n` と答えると、何も読まずに終わります。
+
+ugoke は、プロジェクトのプラグインとスクリプトを、自分の権限で動かします。ほかの人が用意したプロジェクトは、中身を確かめてから信頼してください。
+
+- `ugoke init` で作ったプロジェクトは、聞かずに信頼します
+- パイプや CI のように誰も答えられないときと、`--from-ai` を付けたときは、聞かずに続けます
+
+詳しくは、リファレンスの「[プロジェクトの信頼](../reference/trust.md)」にあります。
+
 ## プロジェクトの設定
 
 `.ugoke/config.yaml` に、プロジェクトの設定を書けます。たとえば、`temporal.address` で、プロジェクトの Temporal Server を指定できます。`plugins` で、ai ステップのプロバイダーなどを足す[プラグイン](../reference/plugins.md)を読み込めます。

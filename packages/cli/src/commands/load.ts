@@ -6,6 +6,7 @@ import { compileDefinition } from "@ugoke/definition";
 import type { DefinitionError } from "@ugoke/definition";
 
 import { createRegistry, loadProjectPlugins, missingHint } from "../plugins.js";
+import type { TrustAnswer, TrustStore } from "../trust.js";
 import { resolveWorkflow } from "../workflows.js";
 
 /** Environment that a command runs in. */
@@ -31,6 +32,13 @@ export interface CommandContext {
    * call it instead. Without it, the prompts are not used.
    */
   interrupt?: (() => void) | undefined;
+  /**
+   * Asks the user whether to trust the project at a root. It is absent when nobody can answer,
+   * such as with a pipe or in CI.
+   */
+  askTrust?: ((root: string) => Promise<TrustAnswer>) | undefined;
+  /** The record of trusted roots. Without it, no command asks, and `ugoke init` records nothing. */
+  trustStore?: TrustStore | undefined;
 }
 
 /** A workflow that passed validation. */

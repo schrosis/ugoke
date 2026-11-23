@@ -72,6 +72,66 @@ describe("createProgram", () => {
     ]);
   });
 
+  it.each([
+    ["run", "run-direct"],
+    ["attach"],
+    ["cancel"],
+    ["inbox", "list"],
+    ["inbox", "answer", "run-1", "--step", "approve", "--values", "{}", "--detach"],
+    ["log", "run-1"],
+    ["validate", "run-direct"],
+    ["schema"],
+    ["docs", "run-direct"],
+  ])("asks whether to trust the project before ugoke %s reads it", async (...args) => {
+    const output = createOutput();
+    const asked: string[] = [];
+    let exitCode: number | undefined;
+
+    await createProgram({
+      askTrust: async (root) => {
+        asked.push(root);
+        return Promise.resolve("no");
+      },
+      cwd: fixtureProject,
+      interruptSignal: () => new AbortController().signal,
+      prepareEngine: () => {},
+      setExitCode: (code) => {
+        exitCode = code;
+      },
+      trustStore: { add: () => {}, has: () => false },
+      ...output,
+    }).parseAsync(args, { from: "user" });
+
+    expect(asked).toEqual([fixtureProject]);
+    expect(exitCode).toBe(1);
+    expect(output.written).toEqual({
+      stderr: `ugoke: ${fixtureProject} is not trusted, so nothing in it was read\n`,
+      stdout: "",
+    });
+  });
+
+  it("goes on with the command after the user trusts the project", async () => {
+    const output = createOutput();
+    const added: string[] = [];
+    let exitCode: number | undefined;
+
+    await createProgram({
+      askTrust: async () => Promise.resolve("yes"),
+      cwd: fixtureProject,
+      interruptSignal: () => new AbortController().signal,
+      prepareEngine: () => {},
+      setExitCode: (code) => {
+        exitCode = code;
+      },
+      trustStore: { add: (root) => added.push(root), has: () => false },
+      ...output,
+    }).parseAsync(["validate", "run-direct"], { from: "user" });
+
+    expect(added).toEqual([fixtureProject]);
+    expect(exitCode).toBe(0);
+    expect(output.written.stdout).toBe("run-direct: valid\n");
+  });
+
   it("exits with zero when validate succeeds", async () => {
     await expect(execute(["validate", "valid"])).resolves.toMatchObject({
       exitCode: 0,

@@ -16,6 +16,8 @@ fsl 5
 //                output, with the path relative to the current directory, and then the next
 //                commands to run, ugoke daemon start and ugoke run hello. On a failure, it prints
 //                the reason to standard error.
+// MODEL-INI-004: the project that the command created is added to the trust record, so the next
+//                command does not ask whether to trust it (project-trust.fsl).
 requirements InitCommand {
   enum Exit { Pending, Zero, One }
   actor User, Ugoke
