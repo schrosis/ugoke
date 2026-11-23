@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import type { StartWorkerOptions } from "@ugoke/engine";
 import { workflowCodeVersion } from "@ugoke/engine";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { projectTaskQueue } from "../state.ts";
 import { createProjectWorkers, WorkersStoppedError } from "./workers.ts";
@@ -37,6 +37,8 @@ describe("createProjectWorkers", () => {
       file,
       log: (message) => lines.push(message),
       prepareEngine: () => {},
+      // The tests wait for the attempts that follow a failure.
+      retryDelayMs: { first: 10, longest: 40 },
       startWorker: async (options) => {
         started.push(options);
         return start(options);
@@ -99,7 +101,7 @@ describe("createProjectWorkers", () => {
     ]);
   });
 
-  it("starts a Worker again after it failed", async () => {
+  it("starts a Worker again by itself after it failed", async () => {
     const workers = create(async (options) => {
       // The first Worker fails after it started.
       if (started.length === 1) {
@@ -111,9 +113,104 @@ describe("createProjectWorkers", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(workers.list()).toMatchObject([{ running: false }]);
-    await workers.add(project);
+    expect(lines).toContain(
+      `Worker of ${project} failed: connection lost. Trying again in 0.01 seconds`,
+    );
+    // No command asks for the project again.
+    await vi.waitFor(() => expect(workers.list()).toMatchObject([{ running: true }]));
     expect(started).toHaveLength(2);
-    expect(workers.list()).toMatchObject([{ running: true }]);
+    await workers.stopAll();
+  });
+
+  it("keeps trying to start a Worker, with longer waits up to the longest, until it starts", async () => {
+    writeFileSync(file, JSON.stringify([project]));
+    const workers = create(async () => {
+      if (started.length <= 4) {
+        throw new Error("server unreachable");
+      }
+      return { stop: async () => {} };
+    });
+
+    await workers.restore();
+    await vi.waitFor(() => expect(workers.list()).toMatchObject([{ running: true }]));
+
+    expect(started).toHaveLength(5);
+    expect(lines.filter((line) => line.startsWith("cannot serve"))).toEqual(
+      [0.01, 0.02, 0.04, 0.04].map(
+        (seconds) =>
+          `cannot serve ${project} yet: server unreachable. Trying again in ${seconds} seconds`,
+      ),
+    );
+    await workers.stopAll();
+  });
+
+  it("starts with the first wait again after a Worker ran", async () => {
+    let fail = true;
+    const workers = create(async () => {
+      if (fail) {
+        throw new Error("server unreachable");
+      }
+      return { stop: async () => {} };
+    });
+    await expect(workers.add(project)).rejects.toThrow("server unreachable");
+    await vi.waitFor(() => expect(started.length).toBeGreaterThanOrEqual(3));
+    fail = false;
+    await vi.waitFor(() => expect(workers.list()).toMatchObject([{ running: true }]));
+    lines = [];
+
+    started.at(-1)?.onError?.(new Error("connection lost"));
+
+    expect(lines).toEqual([
+      `Worker of ${project} failed: connection lost. Trying again in 0.01 seconds`,
+    ]);
+    await workers.stopAll();
+  });
+
+  it("does not try again after it was asked to stop", async () => {
+    const workers = create(async () => Promise.reject(new Error("server unreachable")));
+    await expect(workers.add(project)).rejects.toThrow("server unreachable");
+
+    await workers.stopAll();
+    const attempts = started.length;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(started).toHaveLength(attempts);
+  });
+
+  it("stops trying for a project that was removed", async () => {
+    const workers = create(async () => Promise.reject(new Error("server unreachable")));
+    await expect(workers.add(project)).rejects.toThrow("server unreachable");
+
+    rmSync(join(project, ".ugoke"), { recursive: true });
+    await vi.waitFor(() =>
+      expect(lines).toContain(
+        `stopped trying to serve ${project}, because it has no .ugoke directory`,
+      ),
+    );
+    const attempts = started.length;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(started).toHaveLength(attempts);
+  });
+
+  it("starts the Workers of the kept projects at once, and lists them before they run", async () => {
+    const other = join(directory, "other");
+    mkdirSync(join(other, ".ugoke"), { recursive: true });
+    writeFileSync(file, JSON.stringify([project, other]));
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    const workers = create(async () => {
+      await released;
+      return { stop: async () => {} };
+    });
+
+    const restored = workers.restore();
+
+    expect(workers.list().map(({ root }) => root)).toEqual([project, other]);
+    // Neither waits for the other to start.
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    release();
+    await restored;
+    expect(workers.list()).toMatchObject([{ running: true }, { running: true }]);
   });
 
   it("reads the encryption key before it prepares the engine, and tries again after the key is fixed", async () => {

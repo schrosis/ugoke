@@ -206,8 +206,15 @@ export const runDaemon = async (
       prepareEngine,
     });
     const projects = workers;
-    // Projects that the resident process served before it stopped keep their runs going.
-    await projects.restore();
+    // Projects that the resident process served before it stopped keep their runs going. Their
+    // Workers start while it already answers, so that one that is slow to start, such as on a
+    // server that cannot be reached, does not keep the commands waiting.
+    projects.restore().catch((error: unknown) => {
+      log(
+        context,
+        `ugoke daemon: cannot keep the projects: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
     const startedAt = new Date().toISOString();
     const status = (): DaemonStatus => ({
       address,

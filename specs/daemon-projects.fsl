@@ -35,6 +35,14 @@ fsl 5
 //                package restarts no Worker, and a new Worker imports the module that the process
 //                imported before, which Node keeps. The new code runs after the resident process
 //                restarts.
+// MODEL-DPJ-008: a Worker that failed, and one that could not start, is started again by the
+//                resident process: after a second, and after twice the time before for each
+//                failure, up to a minute. It tries until the Worker runs, the resident process is
+//                asked to stop, or the project has no .ugoke. Whether the Worker starts is given
+//                at each attempt. A request of a command starts it at once, as before. When the
+//                resident process starts, it answers before the Workers of the projects that it
+//                kept run, and starts them at once, so restore and register stand for a start
+//                that the commands do not wait for.
 requirements DaemonProjects {
   actor User, Daemon
 
@@ -57,6 +65,7 @@ requirements DaemonProjects {
     lifecycle Replugging -> Registered
     lifecycle Stopped -> Asked
     lifecycle Stopping -> Stopping
+    lifecycle Registered -> Registered
     lifecycle Asked -> Dropped
   }
 
@@ -78,6 +87,11 @@ requirements DaemonProjects {
   event refuse = Daemon refuses Project (Asked -> Refused)
   event register = Daemon registers Project with serving, commandFails (Asked -> Registered)
     set listed = true
+  event lose = Daemon loses Project (Registered -> Registered)
+    set serving = false
+    covers REQ-DPJ-007 "Worker が止まったときと、起動できなかったときは、常駐プロセスが、起動できるまでやり直す"
+  event retry = Daemon retries Project with workerStarts, serving (Registered -> Registered)
+    covers REQ-DPJ-007 "Worker が止まったときと、起動できなかったときは、常駐プロセスが、起動できるまでやり直す"
   event stop = User stops Project with scriptRunning (Registered -> Stopping)
     covers REQ-DPJ-004 "常駐プロセスは、止めるときに、実行中のスクリプトや AI ステップが終わるのを待つ"
   event finishScript = Daemon finishesScript Project (Stopping -> Stopping)
@@ -90,12 +104,16 @@ requirements DaemonProjects {
   event drop = Daemon drops Project (Asked -> Dropped)
     set listed = false
 
-  rule REQ-DPJ-002 ".ugoke のないプロジェクトは登録せず、登録を頼んだコマンドは 1 で終わる。Worker が起動できなくても登録は残し、次の登録で起動し直す。そのときも、登録を頼んだコマンドは 1 で終わる" {
+  rule REQ-DPJ-002 ".ugoke のないプロジェクトは登録せず、登録を頼んだコマンドは 1 で終わる。Worker が起動できなくても登録は残す。そのときも、登録を頼んだコマンドは 1 で終わる" {
     allow Daemon refuses Project only when not hasUgoke and not restarting
     allow Daemon registers Project only when hasUgoke and input serving == workerStarts
       and input commandFails == (not workerStarts and not restarting)
     RegisteredIsListed: always Project in Registered has listed
     ServingNeedsUgoke: always Project in Registered has (not serving or hasUgoke)
+  }
+  rule REQ-DPJ-007 "Worker が止まったときと、起動できなかったときは、常駐プロセスが、起動できるまでやり直す" {
+    allow Daemon loses Project only when serving
+    allow Daemon retries Project only when not Project.serving and hasUgoke and input serving == input workerStarts
   }
   rule REQ-DPJ-005 "temporal.address を変えると、新しいサーバーで Worker を動かす。前のサーバーの Worker は、常駐プロセスが止まるまで、そのサーバーの実行を受け持つ" {
     allow Daemon serves Project only when input serving == workerStarts and input commandFails == not workerStarts
@@ -132,6 +150,30 @@ requirements DaemonProjects {
     User asksAgain p1 with hasUgoke true, workerStarts true
     Daemon registers p1 with serving true, commandFails false
     then p1 is Registered
+  }
+  scenario AC-DPJ-011 "起動できなかった Worker は、コマンドがなくても、起動できるまでやり直す" {
+    User asks p1 with hasUgoke true, workerStarts false
+    Daemon registers p1 with serving false, commandFails true
+    Daemon retries p1 with workerStarts false, serving false
+    Daemon retries p1 with workerStarts true, serving true
+    then p1.serving
+  }
+  scenario AC-DPJ-012 "止まった Worker は、コマンドがなくても、起動し直す" {
+    User asks p1 with hasUgoke true, workerStarts true
+    Daemon registers p1 with serving true, commandFails false
+    Daemon loses p1
+    Daemon retries p1 with workerStarts true, serving true
+    then p1.serving
+  }
+  scenario AC-DPJ-013 "起動し直したときに起動できなかった Worker も、やり直す" {
+    User asks p1 with hasUgoke true, workerStarts true
+    Daemon registers p1 with serving true, commandFails false
+    User stops p1 with scriptRunning false
+    Daemon halts p1
+    User restores p1 with hasUgoke true, workerStarts false
+    Daemon registers p1 with serving false, commandFails false
+    Daemon retries p1 with workerStarts true, serving true
+    then p1.serving
   }
   scenario AC-DPJ-004 "止めるときは、実行中のスクリプトや AI ステップが終わるのを待つ" {
     User asks p1 with hasUgoke true, workerStarts true
@@ -209,6 +251,37 @@ requirements DaemonProjects {
     Daemon registers p1 with serving true, commandFails false
     User replugs p1 with workerStarts false
     Daemon reloads p1 with commandFails false
+    then rejected
+  }
+  forbidden FB-DPJ-013 "動いている Worker を、やり直さない" {
+    User asks p1 with hasUgoke true, workerStarts true
+    Daemon registers p1 with serving true, commandFails false
+    Daemon retries p1 with workerStarts true, serving true
+    then rejected
+  }
+  forbidden FB-DPJ-014 "やり直しても起動できないのに、動いていることにしない" {
+    User asks p1 with hasUgoke true, workerStarts false
+    Daemon registers p1 with serving false, commandFails true
+    Daemon retries p1 with workerStarts false, serving true
+    then rejected
+  }
+  forbidden FB-DPJ-015 "やり直して起動できたのに、動いていないことにしない" {
+    User asks p1 with hasUgoke true, workerStarts false
+    Daemon registers p1 with serving false, commandFails true
+    Daemon retries p1 with workerStarts true, serving false
+    then rejected
+  }
+  forbidden FB-DPJ-016 "動いていない Worker を、止まったことにしない" {
+    User asks p1 with hasUgoke true, workerStarts false
+    Daemon registers p1 with serving false, commandFails true
+    Daemon loses p1
+    then rejected
+  }
+  forbidden FB-DPJ-017 "止めるように頼まれたあとは、やり直さない" {
+    User asks p1 with hasUgoke true, workerStarts false
+    Daemon registers p1 with serving false, commandFails true
+    User stops p1 with scriptRunning false
+    Daemon retries p1 with workerStarts true, serving true
     then rejected
   }
   forbidden FB-DPJ-001 ".ugoke のないプロジェクトを、登録しない" {

@@ -36,6 +36,11 @@ export interface ProjectWorkersOptions {
   prepareEngine: () => void;
   /** Starts a Worker. Defaults to `startWorker` of `@ugoke/engine`. */
   startWorker?: typeof startWorker;
+  /**
+   * Time before a Worker that failed is started again, in milliseconds. It doubles after each
+   * failure up to the longest. Defaults to a second, and a minute at the longest.
+   */
+  retryDelayMs?: { first: number; longest: number };
 }
 
 /** Thrown when a project is added after the Workers were asked to stop. */
@@ -57,7 +62,10 @@ export interface ProjectWorkers {
    * @throws {WorkersStoppedError} After {@link ProjectWorkers.stopAll} was called.
    */
   add: (root: string) => Promise<DaemonProject>;
-  /** Starts the Workers of the projects that the file keeps. */
+  /**
+   * Starts the Workers of the projects that the file keeps, at once. The projects are listed as
+   * soon as it is called.
+   */
   restore: () => Promise<void>;
   list: () => DaemonProject[];
   /**
@@ -78,6 +86,10 @@ const readRoots = (file: string): string[] => {
 
 const isProject = (root: string): boolean => existsSync(join(root, ugokeDirectory));
 
+/** Says when a Worker is started again, to end a line of the log. */
+const again = (delayMs: number | undefined): string =>
+  delayMs === undefined ? "" : `. Trying again in ${delayMs / 1000} seconds`;
+
 /** A Worker of a project on a server, and the plugin packages that it loaded. */
 interface ServedWorker {
   /** The plugin packages and their settings, as JSON, to compare with the configuration. */
@@ -96,6 +108,7 @@ export const createProjectWorkers = ({
   file,
   log,
   prepareEngine,
+  retryDelayMs = { first: 1000, longest: 60_000 },
   startWorker: startProjectWorker = startWorker,
 }: ProjectWorkersOptions): ProjectWorkers => {
   // Projects to serve, which the file keeps also while their Workers cannot run.
@@ -113,6 +126,9 @@ export const createProjectWorkers = ({
   const pending = new Map<string, Promise<string>>();
   // Whether the Workers were asked to stop, after which none may start.
   let stopped = false;
+  // Projects whose Worker is started again later, and the time before the attempt after that.
+  const retryTimers = new Map<string, NodeJS.Timeout>();
+  const retryDelays = new Map<string, number>();
 
   const save = (): void => {
     writeFileSync(file, `${JSON.stringify([...roots], null, 2)}\n`, { mode: 0o600 });
@@ -160,11 +176,10 @@ export const createProjectWorkers = ({
         eventLog: createFileEventLog({ directory: projectLogDirectory(root) }),
         log: (message) => log(`${root}: ${message}`),
         onError: (error) => {
-          log(
-            `Worker of ${root} failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-          // The next request for the project starts a new Worker.
           forget(root, serverAddress, worker);
+          log(
+            `Worker of ${root} failed: ${error instanceof Error ? error.message : String(error)}${again(retryLater(root))}`,
+          );
         },
         plugins: registry,
         readEnvironment: createEnvironmentReader(root),
@@ -237,7 +252,45 @@ export const createProjectWorkers = ({
     return serverAddress;
   };
 
-  /** Serves a project after the requests that came before for the same project. */
+  /**
+   * Starts the Worker of a project again later, unless that is already planned.
+   *
+   * The resident process tries until the Worker runs, because nothing else would start it: a run
+   * that was detached would wait until someone runs a command in the project.
+   *
+   * @returns The time before the attempt in milliseconds, when this call planned it.
+   */
+  const retryLater = (root: string): number | undefined => {
+    if (stopped || retryTimers.has(root)) {
+      return undefined;
+    }
+    const delayMs = retryDelays.get(root) ?? retryDelayMs.first;
+    retryDelays.set(root, Math.min(delayMs * 2, retryDelayMs.longest));
+    retryTimers.set(
+      root,
+      setTimeout(() => {
+        retryTimers.delete(root);
+        if (stopped) {
+          return;
+        }
+        // A project that was moved or deleted is dropped when the resident process starts.
+        if (!isProject(root)) {
+          retryDelays.delete(root);
+          log(`stopped trying to serve ${root}, because it has no ${ugokeDirectory} directory`);
+          return;
+        }
+        // The failure is logged where it is planned to try again.
+        ensure(root).catch(() => {});
+      }, delayMs),
+    );
+    return delayMs;
+  };
+
+  /**
+   * Serves a project after the requests that came before for the same project.
+   *
+   * A project that cannot be served is tried again later.
+   */
   const ensure = async (root: string): Promise<string> => {
     const request = (pending.get(root) ?? Promise.resolve(""))
       // A failed request does not keep later ones from trying again.
@@ -245,7 +298,16 @@ export const createProjectWorkers = ({
       .then(async () => serve(root));
     pending.set(root, request);
     try {
-      return await request;
+      const serverAddress = await request;
+      clearTimeout(retryTimers.get(root));
+      retryTimers.delete(root);
+      retryDelays.delete(root);
+      return serverAddress;
+    } catch (error) {
+      log(
+        `cannot serve ${root} yet: ${error instanceof Error ? error.message : String(error)}${again(retryLater(root))}`,
+      );
+      throw error;
     } finally {
       if (pending.get(root) === request) {
         pending.delete(root);
@@ -282,24 +344,26 @@ export const createProjectWorkers = ({
         };
       }),
     restore: async () => {
-      for (const root of readRoots(file)) {
+      const restored = readRoots(file).filter((root) => {
         // Only a project that was moved or deleted is dropped. A Worker that fails to start,
-        // such as when the server cannot be reached, is tried again on the next request.
+        // such as when the server cannot be reached, is tried again later.
         if (!isProject(root)) {
           log(`dropped ${root}, because it has no ${ugokeDirectory} directory`);
-          continue;
+          return false;
         }
         roots.add(root);
-        await ensure(root).catch((error: unknown) => {
-          log(
-            `cannot serve ${root} yet: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        });
-      }
+        return true;
+      });
       save();
+      // The failures are logged where it is planned to try again.
+      await Promise.all(restored.map(async (root) => ensure(root).catch(() => {})));
     },
     stopAll: async () => {
       stopped = true;
+      for (const timer of retryTimers.values()) {
+        clearTimeout(timer);
+      }
+      retryTimers.clear();
       // A request that is on its way may still start a Worker, which is then stopped below.
       while (pending.size > 0) {
         await Promise.allSettled(pending.values());
