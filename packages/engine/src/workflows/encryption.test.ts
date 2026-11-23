@@ -147,18 +147,18 @@ describe("ugoke with encryption", () => {
     });
   }, 60_000);
 
-  it("does not take an answer that someone copies from the history of another run", async () => {
+  it("does not take an answer that someone copies from the history of a run that ended", async () => {
     const taskQueue = randomUUID();
     const worker = await createVictim(taskQueue, []);
     const client = new Client({
       connection: environment.connection,
       ...clientDataConverter(key),
     });
-    const startWaiting = async (): Promise<WorkflowHandle> => {
+    const startWaiting = async (workflowId: string = randomUUID()): Promise<WorkflowHandle> => {
       const handle = await client.workflow.start(ugoke, {
         args: [approval],
         taskQueue,
-        workflowId: randomUUID(),
+        workflowId,
       });
       await vi.waitFor(async () => expect(await waitsForAnswer(handle)).toBe(true), 10_000);
       return handle;
@@ -180,14 +180,19 @@ describe("ugoke with encryption", () => {
         throw new Error("The history has no answer");
       }
 
-      await expect(
-        environment.client.workflow
-          .getHandle(target.workflowId)
-          .executeUpdate(answerUpdateName, { args: [RawValue.fromPayload(copied)] }),
-      ).rejects.toThrow();
+      // The input can be sent again, so someone can also start a run with the same workflow ID.
+      const restarted = await startWaiting(answered.workflowId);
 
-      await expect(waitsForAnswer(target)).resolves.toBe(true);
-      await target.terminate();
+      for (const run of [target, restarted]) {
+        await expect(
+          environment.client.workflow
+            .getHandle(run.workflowId)
+            .executeUpdate(answerUpdateName, { args: [RawValue.fromPayload(copied)] }),
+        ).rejects.toThrow();
+
+        await expect(waitsForAnswer(run)).resolves.toBe(true);
+        await run.terminate();
+      }
     });
   }, 60_000);
 

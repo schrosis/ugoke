@@ -305,9 +305,11 @@ export const ugoke = async (
     },
     {
       // A rejected answer leaves no trace in the history, and the caller can answer again.
-      validator: ({ step, values, visit, workflowId }) => {
-        // An answer copied from the history of another run names that run.
-        if (workflowId !== workflowInfo().workflowId) {
+      validator: ({ runId, step, values, visit, workflowId }) => {
+        // An answer copied from the history of another run names that run. The server assigns
+        // the run ID, so a run that is started again with the same workflow ID has another.
+        const info = workflowInfo();
+        if (workflowId !== info.workflowId || runId !== info.runId) {
           throw new Error("The answer is not for this run");
         }
         const current = waiting;

@@ -122,8 +122,8 @@ export interface StepAnswer {
 /**
  * Sends an answer to a run, which a Worker of the run must serve.
  *
- * The answer that is sent always names the run and the visit, so a copy of it answers nothing
- * else.
+ * The answer that is sent always names the run, with its run ID, and the visit, so a copy of it
+ * answers nothing else.
  *
  * @throws {AnswerRejectedError} When the run rejects the answer.
  */
@@ -135,7 +135,14 @@ export const sendAnswer = async (
   if (waitingVisit === undefined) {
     throw new AnswerRejectedError(`Step ${step} is not waiting for an answer`);
   }
-  const answer: Answer = { step, values, visit: waitingVisit, workflowId: handle.workflowId };
+  const { runId } = await handle.describe();
+  const answer: Answer = {
+    runId,
+    step,
+    values,
+    visit: waitingVisit,
+    workflowId: handle.workflowId,
+  };
   await handle.executeUpdate(answerUpdateName, { args: [answer] }).catch((error: unknown) => {
     if (error instanceof WorkflowUpdateFailedError) {
       throw new AnswerRejectedError(reasonOf(error));

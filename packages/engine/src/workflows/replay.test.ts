@@ -16,6 +16,7 @@ import { z } from "zod";
 import { createActivities } from "../activities/index.ts";
 import { createMemoryEventLog } from "../events.ts";
 import { answerUpdateName, waitingQueryName } from "../messages.ts";
+import type { Answer } from "../messages.ts";
 import { workflowCodeVersion } from "../version.ts";
 import { ugoke } from "./index.ts";
 
@@ -94,7 +95,7 @@ const scenarios: Record<
     drive: async (handle) => {
       await waitForStep(handle);
       await handle.executeUpdate(answerUpdateName, {
-        args: [{ step: "ask", values: { go: true }, visit: 0, workflowId: handle.workflowId }],
+        args: [await answerOf(handle, { go: true })],
       });
     },
     inputs: {},
@@ -185,7 +186,7 @@ const scenarios: Record<
     drive: async (handle) => {
       await waitForStep(handle);
       await handle.executeUpdate(answerUpdateName, {
-        args: [{ step: "ask", values: { name: "ugoke" }, visit: 0, workflowId: handle.workflowId }],
+        args: [await answerOf(handle, { name: "ugoke" })],
       });
     },
     inputs: {},
@@ -255,7 +256,7 @@ const scenarios: Record<
     drive: async (handle) => {
       await waitForStep(handle);
       await handle.executeUpdate(answerUpdateName, {
-        args: [{ step: "ask", values: { count: 2 }, visit: 0, workflowId: handle.workflowId }],
+        args: [await answerOf(handle, { count: 2 })],
       });
     },
     inputs: { count: 1 },
@@ -292,6 +293,18 @@ const scenarios: Record<
     },
   },
 };
+
+/** Builds an answer for the first visit of the step "ask" of the run. */
+const answerOf = async (
+  handle: WorkflowHandle,
+  values: Record<string, unknown>,
+): Promise<Answer> => ({
+  runId: (await handle.describe()).runId,
+  step: "ask",
+  values,
+  visit: 0,
+  workflowId: handle.workflowId,
+});
 
 const waitForStep = async (handle: WorkflowHandle): Promise<void> => {
   for (let attempt = 0; attempt < 200; attempt += 1) {

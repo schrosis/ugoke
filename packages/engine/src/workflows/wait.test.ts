@@ -65,7 +65,14 @@ const waitForStep = async (handle: WorkflowHandle): Promise<WaitingStep> => {
 /** Sends an answer for the first visit of a step of the run, unless the value says otherwise. */
 const answer = async (handle: WorkflowHandle, value: object) =>
   handle.executeUpdate(answerUpdateName, {
-    args: [{ visit: 0, workflowId: handle.workflowId, ...value }],
+    args: [
+      {
+        runId: (await handle.describe()).runId,
+        visit: 0,
+        workflowId: handle.workflowId,
+        ...value,
+      },
+    ],
   });
 
 describe("ugoke wait steps", () => {
@@ -147,6 +154,14 @@ describe("ugoke wait steps", () => {
     ],
     [
       { step: "ask", values: { name: "ugoke" }, workflowId: undefined },
+      "The answer is not for this run",
+    ],
+    [
+      { runId: "another-run", step: "ask", values: { name: "ugoke" } },
+      "The answer is not for this run",
+    ],
+    [
+      { runId: undefined, step: "ask", values: { name: "ugoke" } },
       "The answer is not for this run",
     ],
   ])(

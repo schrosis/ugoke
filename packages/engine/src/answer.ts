@@ -191,7 +191,8 @@ const answerStep = async (
       stop();
     }
     try {
-      const answer: Answer = { step, values, visit, workflowId: handle.workflowId };
+      const { runId } = await handle.describe();
+      const answer: Answer = { runId, step, values, visit, workflowId: handle.workflowId };
       await handle.executeUpdate(answerUpdateName, { args: [answer] });
       return;
     } catch (error) {

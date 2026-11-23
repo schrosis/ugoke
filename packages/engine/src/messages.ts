@@ -45,8 +45,13 @@ export interface WaitingStep {
  * someone who copies one from the history cannot make another run, step, or visit accept it.
  */
 export interface Answer {
-  /** ID of the run that the answer is for, so that it cannot answer another run. */
+  /** Workflow ID of the run that the answer is for, so that it cannot answer another run. */
   workflowId: string;
+  /**
+   * Run ID of the run that the answer is for. The server assigns it, so the answer cannot answer a
+   * run that someone starts again with the same workflow ID.
+   */
+  runId: string;
   /** ID of the step that the answer is for, so that an old answer cannot answer a later step. */
   step: string;
   /** Visit of the step that the answer is for, so that it cannot answer a later visit. */
