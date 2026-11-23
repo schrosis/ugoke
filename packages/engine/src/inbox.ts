@@ -109,12 +109,33 @@ export class AnswerRejectedError extends Error {
   }
 }
 
+/** An answer to a wait step of a run. */
+export interface StepAnswer {
+  /** ID of the step that the answer is for. */
+  step: string;
+  /** Visit of the step that the answer is for. Defaults to the visit that waits now. */
+  visit?: number | undefined;
+  /** Values of the answers, keyed by name. */
+  values: Readonly<Record<string, unknown>>;
+}
+
 /**
  * Sends an answer to a run, which a Worker of the run must serve.
  *
+ * The answer that is sent always names the run and the visit, so a copy of it answers nothing
+ * else.
+ *
  * @throws {AnswerRejectedError} When the run rejects the answer.
  */
-export const sendAnswer = async (handle: WorkflowHandle, answer: Answer): Promise<void> => {
+export const sendAnswer = async (
+  handle: WorkflowHandle,
+  { step, values, visit }: StepAnswer,
+): Promise<void> => {
+  const waitingVisit = visit ?? (await handle.query<WaitingStep | null>(waitingQueryName))?.visit;
+  if (waitingVisit === undefined) {
+    throw new AnswerRejectedError(`Step ${step} is not waiting for an answer`);
+  }
+  const answer: Answer = { step, values, visit: waitingVisit, workflowId: handle.workflowId };
   await handle.executeUpdate(answerUpdateName, { args: [answer] }).catch((error: unknown) => {
     if (error instanceof WorkflowUpdateFailedError) {
       throw new AnswerRejectedError(reasonOf(error));
@@ -124,7 +145,7 @@ export const sendAnswer = async (handle: WorkflowHandle, answer: Answer): Promis
 };
 
 /** Options of {@link answerInbox}. */
-export interface AnswerInboxOptions extends Answer {
+export interface AnswerInboxOptions extends StepAnswer {
   address: string;
   namespace?: string;
   workflowId: string;

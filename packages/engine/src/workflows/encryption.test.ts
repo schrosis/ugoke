@@ -6,14 +6,35 @@ import { inspect } from "node:util";
 import { intermediateVersion } from "@ugoke/core";
 import type { Intermediate, ScriptRequest } from "@ugoke/core";
 import { Client } from "@temporalio/client";
+import type { WorkflowHandle } from "@temporalio/client";
+import { RawValue } from "@temporalio/common";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
-import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, inject, it, vi } from "vitest";
 
 import { createActivities } from "../activities/index.ts";
 import { clientDataConverter, workerDataConverter } from "../encryption.ts";
+import { sendAnswer } from "../inbox.ts";
+import { answerUpdateName, waitingQueryName } from "../messages.ts";
 import { listRunningWorkflows } from "../run.ts";
 import { ugoke } from "./index.ts";
+
+const approval: Intermediate = {
+  inputs: {},
+  start: "approve",
+  steps: {
+    approve: {
+      answers: { ok: { required: true, type: "boolean" } },
+      inputs: {},
+      method: "terminal",
+      next: { type: "end" },
+      outputs: {},
+      type: "wait",
+      with: { message: "Deploy?" },
+    },
+  },
+  version: intermediateVersion,
+};
 
 const key = randomBytes(32);
 const workflowsPath = fileURLToPath(new URL("./index.ts", import.meta.url));
@@ -36,6 +57,9 @@ const intermediate: Intermediate = {
   },
   version: intermediateVersion,
 };
+
+const waitsForAnswer = async (handle: WorkflowHandle): Promise<boolean> =>
+  (await handle.query(waitingQueryName)) !== null;
 
 describe("ugoke with encryption", () => {
   let environment: TestWorkflowEnvironment;
@@ -120,6 +144,50 @@ describe("ugoke with encryption", () => {
       const history = JSON.stringify(await handle.fetchHistory());
       expect(history).not.toContain("secret-failure");
       expect(history).not.toContain("encryption.test.ts");
+    });
+  }, 60_000);
+
+  it("does not take an answer that someone copies from the history of another run", async () => {
+    const taskQueue = randomUUID();
+    const worker = await createVictim(taskQueue, []);
+    const client = new Client({
+      connection: environment.connection,
+      ...clientDataConverter(key),
+    });
+    const startWaiting = async (): Promise<WorkflowHandle> => {
+      const handle = await client.workflow.start(ugoke, {
+        args: [approval],
+        taskQueue,
+        workflowId: randomUUID(),
+      });
+      await vi.waitFor(async () => expect(await waitsForAnswer(handle)).toBe(true), 10_000);
+      return handle;
+    };
+
+    await worker.runUntil(async () => {
+      const answered = await startWaiting();
+      const target = await startWaiting();
+      await sendAnswer(answered, { step: "approve", values: { ok: true } });
+      await answered.result();
+      const { events } = await environment.client.workflow
+        .getHandle(answered.workflowId)
+        .fetchHistory();
+      const copied = events
+        ?.map((event) => event.workflowExecutionUpdateAcceptedEventAttributes)
+        .find((attributes) => attributes !== null && attributes !== undefined)?.acceptedRequest
+        ?.input?.args?.payloads?.[0];
+      if (copied === undefined) {
+        throw new Error("The history has no answer");
+      }
+
+      await expect(
+        environment.client.workflow
+          .getHandle(target.workflowId)
+          .executeUpdate(answerUpdateName, { args: [RawValue.fromPayload(copied)] }),
+      ).rejects.toThrow();
+
+      await expect(waitsForAnswer(target)).resolves.toBe(true);
+      await target.terminate();
     });
   }, 60_000);
 

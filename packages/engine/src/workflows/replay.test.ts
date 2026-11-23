@@ -94,7 +94,7 @@ const scenarios: Record<
     drive: async (handle) => {
       await waitForStep(handle);
       await handle.executeUpdate(answerUpdateName, {
-        args: [{ step: "ask", values: { go: true } }],
+        args: [{ step: "ask", values: { go: true }, visit: 0, workflowId: handle.workflowId }],
       });
     },
     inputs: {},
@@ -185,7 +185,7 @@ const scenarios: Record<
     drive: async (handle) => {
       await waitForStep(handle);
       await handle.executeUpdate(answerUpdateName, {
-        args: [{ step: "ask", values: { name: "ugoke" } }],
+        args: [{ step: "ask", values: { name: "ugoke" }, visit: 0, workflowId: handle.workflowId }],
       });
     },
     inputs: {},
@@ -255,7 +255,7 @@ const scenarios: Record<
     drive: async (handle) => {
       await waitForStep(handle);
       await handle.executeUpdate(answerUpdateName, {
-        args: [{ step: "ask", values: { count: 2 } }],
+        args: [{ step: "ask", values: { count: 2 }, visit: 0, workflowId: handle.workflowId }],
       });
     },
     inputs: { count: 1 },

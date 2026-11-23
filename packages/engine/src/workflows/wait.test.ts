@@ -13,7 +13,7 @@ import { z } from "zod";
 
 import { createActivities } from "../activities/index.ts";
 import { answerUpdateName, waitingQueryName } from "../messages.ts";
-import type { Answer, WaitingStep } from "../messages.ts";
+import type { WaitingStep } from "../messages.ts";
 import { ugoke } from "./index.ts";
 
 const intermediate: Intermediate = {
@@ -62,8 +62,11 @@ const waitForStep = async (handle: WorkflowHandle): Promise<WaitingStep> => {
   throw new Error("The workflow did not wait for an answer");
 };
 
-const answer = async (handle: WorkflowHandle, value: Answer) =>
-  handle.executeUpdate(answerUpdateName, { args: [value] });
+/** Sends an answer for the first visit of a step of the run, unless the value says otherwise. */
+const answer = async (handle: WorkflowHandle, value: object) =>
+  handle.executeUpdate(answerUpdateName, {
+    args: [{ visit: 0, workflowId: handle.workflowId, ...value }],
+  });
 
 describe("ugoke wait steps", () => {
   let environment: TestWorkflowEnvironment;
@@ -133,6 +136,19 @@ describe("ugoke wait steps", () => {
     [{ step: "ask", values: {} }, "ask.name: Required"],
     [{ step: "ask", values: { name: 1 } }, "ask.name: Must be a string"],
     [{ step: "greet", values: { name: "ugoke" } }, "Step greet is not waiting for an answer"],
+    [{ step: "ask", values: { name: "ugoke" }, visit: 1 }, "Step ask is not waiting for an answer"],
+    [
+      { step: "ask", values: { name: "ugoke" }, visit: undefined },
+      "Step ask is not waiting for an answer",
+    ],
+    [
+      { step: "ask", values: { name: "ugoke" }, workflowId: "another-run" },
+      "The answer is not for this run",
+    ],
+    [
+      { step: "ask", values: { name: "ugoke" }, workflowId: undefined },
+      "The answer is not for this run",
+    ],
   ])(
     "rejects the answer %j and keeps waiting",
     async (value, message) => {

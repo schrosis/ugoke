@@ -484,7 +484,7 @@ describe("ugoke", () => {
       };
       const answerStep = async (visit: number, again: boolean) =>
         handle.executeUpdate(answerUpdateName, {
-          args: [{ step: "ask", values: { again }, visit }],
+          args: [{ step: "ask", values: { again }, visit, workflowId: handle.workflowId }],
         });
 
       await waitForVisit(0);
