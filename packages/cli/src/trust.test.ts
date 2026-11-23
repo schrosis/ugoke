@@ -2,6 +2,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -14,7 +15,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createOutput } from "./testing.ts";
-import { createTrustStore, ensureTrustedProject, trustCreatedProject } from "./trust.ts";
+import {
+  createTrustStore,
+  ensureTrustedProject,
+  trustCreatedProject,
+  TrustRecordError,
+} from "./trust.ts";
 import type { TrustAnswer, TrustStore } from "./trust.ts";
 
 let directory: string;
@@ -62,19 +68,39 @@ describe("createTrustStore", () => {
     expect(readFileSync(file, "utf8").endsWith("\n")).toBe(true);
   });
 
-  it("has no root when the record cannot be read", () => {
-    writeFileSync(file, "{");
-
-    expect(createTrustStore(() => file).has(root)).toBe(false);
-  });
-
-  it("replaces a record that cannot be read when a root is added", () => {
-    writeFileSync(file, "{");
+  it.each([
+    [
+      "broken JSON",
+      '[\n  "/a",\n]\n',
+      /^The trust record .+trusted-projects\.json cannot be read: .+\. Fix the file, or delete it to be asked about each project again$/su,
+    ],
+    ["not a list", "{}", /cannot be read: it is not a list of paths\. Fix the file/u],
+    ["a list of other values", "[1]", /cannot be read: it is not a list of paths\. Fix the file/u],
+  ])("does not read a record that is %s", (_name, content, message) => {
+    writeFileSync(file, content);
     const store = createTrustStore(() => file);
 
-    store.add(root);
+    expect(() => store.has(root)).toThrow(message);
+    expect(() => store.has(root)).toThrow(TrustRecordError);
+  });
 
-    expect(store.has(root)).toBe(true);
+  it("does not replace a record that cannot be read when a root is added", () => {
+    writeFileSync(file, '[\n  "/a",\n]\n');
+
+    expect(() => createTrustStore(() => file).add(root)).toThrow(TrustRecordError);
+
+    expect(readFileSync(file, "utf8")).toBe('[\n  "/a",\n]\n');
+  });
+
+  it("leaves no temporary file when the record cannot be replaced", () => {
+    // A directory in place of the record cannot be replaced by a file.
+    mkdirSync(join(directory, "state"));
+    const blocked = join(directory, "state", "trusted-projects.json");
+    mkdirSync(join(blocked, "child"), { recursive: true });
+
+    expect(() => createTrustStore(() => blocked).add(root)).toThrow();
+
+    expect(readdirSync(join(directory, "state"))).toEqual(["trusted-projects.json"]);
   });
 
   it("throws when the record cannot be written", () => {
@@ -192,6 +218,30 @@ describe("ensureTrustedProject", () => {
     );
   });
 
+  it("ends with 1 before asking when the record cannot be read", async () => {
+    writeFileSync(file, '[\n  "/a",\n]\n');
+    const output = createOutput();
+    const asker = createAsker("yes");
+
+    await expect(
+      ensureTrustedProject({ cwd: root, trustStore: store, ...asker, ...output }),
+    ).resolves.toBe(1);
+
+    expect(asker.asked).toEqual([]);
+    expect(readFileSync(file, "utf8")).toBe('[\n  "/a",\n]\n');
+    expect(output.written.stderr).toMatch(
+      /^ugoke: The trust record .+trusted-projects\.json cannot be read: .+\. Fix the file, or delete it to be asked about each project again\n$/su,
+    );
+  });
+
+  it("goes on without reading the record that cannot be read when nobody can answer", async () => {
+    writeFileSync(file, "{");
+
+    await expect(
+      ensureTrustedProject({ cwd: root, trustStore: store, ...createOutput() }),
+    ).resolves.toBeUndefined();
+  });
+
   it("goes on without reading or writing the record when nobody can answer", async () => {
     await expect(
       ensureTrustedProject({ cwd: root, trustStore: store, ...createOutput() }),
@@ -223,6 +273,18 @@ describe("ensureTrustedProject", () => {
 });
 
 describe("trustCreatedProject", () => {
+  it("warns and keeps a record that cannot be read", async () => {
+    writeFileSync(file, "{");
+    const output = createOutput();
+
+    await trustCreatedProject({ cwd: root, trustStore: createTrustStore(() => file), ...output });
+
+    expect(readFileSync(file, "utf8")).toBe("{");
+    expect(output.written.stderr).toMatch(
+      /^ugoke: could not record that the project is trusted, so the next command asks: The trust record .+ cannot be read/u,
+    );
+  });
+
   it("records the project of the current directory", async () => {
     const store = createTrustStore(() => file);
 

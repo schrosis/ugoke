@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,11 +12,16 @@ export type TrustAnswer = "interrupted" | "no" | "yes";
 
 /** The project roots that the user trusts. */
 export interface TrustStore {
-  /** Returns whether the record has the root. A record that cannot be read has no root. */
+  /**
+   * Returns whether the record has the root. A record that does not exist yet has no root.
+   *
+   * @throws {TrustRecordError} When the record cannot be read.
+   */
   has: (root: string) => boolean;
   /**
    * Adds the root to the record.
    *
+   * @throws {TrustRecordError} When the record cannot be read, so that it is not replaced.
    * @throws When the record cannot be written.
    */
   add: (root: string) => void;
@@ -35,13 +40,39 @@ export interface TrustContext {
   trustStore?: TrustStore | undefined;
 }
 
+/** A trust record that exists but cannot be read, such as one that was edited into broken JSON. */
+export class TrustRecordError extends Error {
+  override name = "TrustRecordError";
+}
+
+const isMissing = (error: unknown): boolean =>
+  error instanceof Error && "code" in error && error.code === "ENOENT";
+
+/**
+ * Reads the roots of the record.
+ *
+ * A broken record is not read as an empty one, because the next root that is added would then
+ * replace the roots of every other project without telling why they were asked about again.
+ */
 const readRoots = (file: string): string[] => {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    return Array.isArray(parsed) ? parsed.filter((root) => typeof root === "string") : [];
-  } catch {
-    return [];
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    if (isMissing(error)) {
+      return [];
+    }
+    throw new TrustRecordError(
+      `The trust record ${file} cannot be read: ${error instanceof Error ? error.message : String(error)}. Fix the file, or delete it to be asked about each project again`,
+      { cause: error },
+    );
   }
+  if (!Array.isArray(parsed) || !parsed.every((root) => typeof root === "string")) {
+    throw new TrustRecordError(
+      `The trust record ${file} cannot be read: it is not a list of paths. Fix the file, or delete it to be asked about each project again`,
+    );
+  }
+  return parsed;
 };
 
 /**
@@ -60,9 +91,16 @@ export const createTrustStore = (
       return;
     }
     // The file is replaced at once, so that a command that reads it meanwhile gets a whole record.
+    // Nothing locks the record between reading and replacing it: when two commands add a root at
+    // the same time, one root can be lost, and the next command of its project asks again.
     const temporary = `${path}.${randomUUID()}.tmp`;
-    writeFileSync(temporary, `${JSON.stringify([...roots, root], null, 2)}\n`, { mode: 0o600 });
-    renameSync(temporary, path);
+    try {
+      writeFileSync(temporary, `${JSON.stringify([...roots, root], null, 2)}\n`, { mode: 0o600 });
+      renameSync(temporary, path);
+    } finally {
+      // After the rename, there is nothing to remove.
+      rmSync(temporary, { force: true });
+    }
   },
   has: (root) => readRoots(file()).includes(root),
 });
@@ -74,7 +112,8 @@ export const createTrustStore = (
  * A command reads the configuration file and the definitions of its project, and runs its plugins
  * in this process, so a project that someone else prepared could run their code as the user.
  * When nobody can answer, such as with `--from-ai`, a pipe, or in CI, the command goes on without
- * asking, and the record is neither read nor written.
+ * asking, and the record is neither read nor written. A record that cannot be read ends the
+ * command before it asks.
  *
  * @param fromAi Whether a program runs the command, which cannot answer.
  * @returns The exit code to end the command with, or `undefined` when the command goes on.
@@ -93,8 +132,17 @@ export const ensureTrustedProject = async (
     return undefined;
   }
   const root = await realpath(found);
-  if (trustStore.has(root)) {
-    return undefined;
+  try {
+    if (trustStore.has(root)) {
+      return undefined;
+    }
+  } catch (error) {
+    if (!(error instanceof TrustRecordError)) {
+      throw error;
+    }
+    // Asking would end in a record that cannot be written, so the command ends before it asks.
+    context.stderr(`ugoke: ${error.message}\n`);
+    return 1;
   }
   const answer = await askTrust(root);
   if (answer === "interrupted") {
@@ -119,8 +167,8 @@ export const ensureTrustedProject = async (
  * Records that the user trusts a project that `ugoke init` created, so that the next command
  * does not ask.
  *
- * A record that cannot be written only warns, because the project is created, and the next
- * command asks instead.
+ * A record that cannot be read or written only warns, because the project is created, and the
+ * next command asks or reports the record instead.
  */
 export const trustCreatedProject = async (context: TrustContext): Promise<void> => {
   if (context.trustStore === undefined) {
