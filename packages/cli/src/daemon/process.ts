@@ -16,7 +16,7 @@ import { ensureTemporalCli, startDevServer } from "../temporal-cli/index.js";
 import { getDaemonStatus } from "./client.js";
 import type { DaemonStatus } from "./client.js";
 import { checkSocketPath, daemonPaths } from "./paths.js";
-import { createProjectWorkers } from "./workers.js";
+import { createProjectWorkers, WorkersStoppedError } from "./workers.js";
 import type { ProjectWorkers } from "./workers.js";
 
 /** Options of {@link runDaemon}. */
@@ -241,6 +241,11 @@ export const runDaemon = async (
             respond(response, 200, await projects.add(await realpath(root)));
           })
           .catch((error: unknown) => {
+            // The request to stop came while this one was read.
+            if (error instanceof WorkersStoppedError) {
+              respond(response, 503, { error: error.message });
+              return;
+            }
             respond(response, 400, {
               error: error instanceof Error ? error.message : String(error),
             });

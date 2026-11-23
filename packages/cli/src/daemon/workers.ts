@@ -38,6 +38,14 @@ export interface ProjectWorkersOptions {
   startWorker?: typeof startWorker;
 }
 
+/** Thrown when a project is added after the Workers were asked to stop. */
+export class WorkersStoppedError extends Error {
+  constructor() {
+    super("ugoke daemon is stopping");
+    this.name = "WorkersStoppedError";
+  }
+}
+
 /** The Workers of the projects that the resident process serves. */
 export interface ProjectWorkers {
   /**
@@ -45,12 +53,17 @@ export interface ProjectWorkers {
    *
    * The configuration file of the project is read again, so that a Worker moves to the server
    * that the project names now.
+   *
+   * @throws {WorkersStoppedError} After {@link ProjectWorkers.stopAll} was called.
    */
   add: (root: string) => Promise<DaemonProject>;
   /** Starts the Workers of the projects that the file keeps. */
   restore: () => Promise<void>;
   list: () => DaemonProject[];
-  /** Stops every Worker, after the scripts that they run finish. */
+  /**
+   * Stops every Worker, after the scripts that they run finish. A request that came before is
+   * finished first, so that the Worker that it starts stops too, and no project is added after.
+   */
   stopAll: () => Promise<void>;
 }
 
@@ -98,6 +111,8 @@ export const createProjectWorkers = ({
   // The latest request to serve each project. A request waits for the previous one, so that
   // concurrent requests start one Worker.
   const pending = new Map<string, Promise<string>>();
+  // Whether the Workers were asked to stop, after which none may start.
+  let stopped = false;
 
   const save = (): void => {
     writeFileSync(file, `${JSON.stringify([...roots], null, 2)}\n`, { mode: 0o600 });
@@ -240,6 +255,9 @@ export const createProjectWorkers = ({
 
   return {
     add: async (root) => {
+      if (stopped) {
+        throw new WorkersStoppedError();
+      }
       if (!isProject(root)) {
         throw new Error(`Not a project, because it has no ${ugokeDirectory} directory: ${root}`);
       }
@@ -281,6 +299,11 @@ export const createProjectWorkers = ({
       save();
     },
     stopAll: async () => {
+      stopped = true;
+      // A request that is on its way may still start a Worker, which is then stopped below.
+      while (pending.size > 0) {
+        await Promise.allSettled(pending.values());
+      }
       const running = await Promise.allSettled(
         [...workers.values()].flatMap((byServer) =>
           [...byServer.values()].map(({ worker }) => worker),
