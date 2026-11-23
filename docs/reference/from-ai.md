@@ -8,6 +8,8 @@ AI エージェントなどのプログラムから ugoke を動かすときは�
 - [`ugoke inbox list`](commands/inbox.md#ugoke-inbox-list)
 - [`ugoke inbox answer`](commands/inbox.md#ugoke-inbox-answer)
 
+`--from-ai` を付けると、[プロジェクトを信頼するか](trust.md#誰も答えられないとき)を聞かずに、コマンドを続けます。信頼できるプロジェクトでだけ実行してください。
+
 ## 流れ
 
 1. `ugoke run <workflow> --from-ai` で実行を始めます

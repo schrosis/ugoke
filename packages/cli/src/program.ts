@@ -12,6 +12,8 @@ import { run } from "./commands/run.js";
 import { showDaemonStatus, startDaemon, stopDaemon } from "./daemon/commands.js";
 import { runDaemon } from "./daemon/process.js";
 import type { ServerOptions } from "./server.js";
+import { createTrustStore, ensureTrustedProject } from "./trust.js";
+import { askTrustInTerminal } from "./trust-prompt.js";
 import { docs } from "./commands/docs.js";
 import { init } from "./commands/init.js";
 import { schema } from "./commands/schema.js";
@@ -126,6 +128,11 @@ export const colorsOf = (stream: {
 };
 
 const processContext = (): ProgramContext => ({
+  // The question goes to standard error, so that the output of a command can still be redirected.
+  askTrust:
+    process.stdin.isTTY && process.stderr.isTTY
+      ? async (root) => askTrustInTerminal(root, { input: process.stdin, output: process.stderr })
+      : undefined,
   colors: { stderr: colorsOf(process.stderr), stdout: colorsOf(process.stdout) },
   columns: process.stdout.isTTY ? () => process.stdout.columns : undefined,
   cwd: process.cwd(),
@@ -140,6 +147,7 @@ const processContext = (): ProgramContext => ({
   stderr: (text) => process.stderr.write(text),
   stdin: () => process.stdin,
   stdout: (text) => process.stdout.write(text),
+  trustStore: createTrustStore(),
 });
 
 const daemonHelp = `
@@ -175,6 +183,18 @@ export const createProgram = (context: ProgramContext = processContext()) => {
     .name("ugoke")
     .description("Run workflows that combine AI, people, and scripts")
     .version(version);
+
+  /**
+   * Asks whether to trust the project before a command reads it, and returns whether the command
+   * must end, with its exit code set.
+   */
+  const refuses = async (fromAi?: boolean): Promise<boolean> => {
+    const exitCode = await ensureTrustedProject(context, fromAi === true);
+    if (exitCode !== undefined) {
+      context.setExitCode(exitCode);
+    }
+    return exitCode !== undefined;
+  };
 
   program.commandsGroup("Getting started:");
 
@@ -216,6 +236,9 @@ export const createProgram = (context: ProgramContext = processContext()) => {
 ${daemonHelp}`,
     )
     .action(async (workflow, { address, detach, fromAi, input }) => {
+      if (await refuses(fromAi)) {
+        return;
+      }
       const server = toServerOptions(address);
       const signal = context.interruptSignal();
       context.setExitCode(
@@ -247,6 +270,9 @@ ${daemonHelp}`,
 ${daemonHelp}`,
     )
     .action(async (workflowId, { address, force }) => {
+      if (await refuses()) {
+        return;
+      }
       const server = toServerOptions(address);
       const signal = context.interruptSignal();
       context.setExitCode(
@@ -270,6 +296,9 @@ ${daemonHelp}`,
     .argument("[workflow-id]", "ID of the run. Without it, the runs of the project are listed")
     .option("--address <address>", "address of the Temporal Server")
     .action(async (workflowId, { address }) => {
+      if (await refuses()) {
+        return;
+      }
       const server = toServerOptions(address);
       const signal = context.interruptSignal();
       context.setExitCode(
@@ -296,6 +325,9 @@ ${daemonHelp}`,
     .option("--from-ai", "write a JSON line for each question, for a program such as an AI agent")
     .addOption(new Option("--address <address>", "address of the Temporal Server"))
     .action(async ({ address, fromAi }) => {
+      if (await refuses(fromAi)) {
+        return;
+      }
       context.setExitCode(
         await listInboxCommand(
           {
@@ -337,6 +369,9 @@ as a run that was detached from "ugoke run". To answer a run and follow it in th
       if (detach !== true && fromAi !== true) {
         command.error("error: ugoke inbox answer needs --from-ai or --detach");
       }
+      if (await refuses(fromAi)) {
+        return;
+      }
       context.setExitCode(
         await answerInboxCommand(
           {
@@ -370,6 +405,9 @@ Both the standard output and the standard error of the steps are shown on standa
 --follow asks the Temporal Server whether the run still runs.`,
     )
     .action(async (workflowId, { address, follow, json, tail }) => {
+      if (await refuses()) {
+        return;
+      }
       context.setExitCode(
         await log(
           {
@@ -393,6 +431,9 @@ Both the standard output and the standard error of the steps are shown on standa
     .description("Validate a workflow definition in .ugoke/workflows")
     .argument("<workflow>", "workflow name, such as deploy or release/notes")
     .action(async (workflow) => {
+      if (await refuses()) {
+        return;
+      }
       context.setExitCode(await validate(workflow, context));
     });
 
@@ -410,6 +451,9 @@ Refer to them with $schema at the top of each file, which editors use for comple
 Run it again after changing plugins.`,
     )
     .action(async () => {
+      if (await refuses()) {
+        return;
+      }
       context.setExitCode(await schema(context));
     });
 
@@ -418,6 +462,9 @@ Run it again after changing plugins.`,
     .description("Generate a Markdown document next to each workflow definition")
     .argument("[workflow]", "workflow name, such as deploy or release/notes. Defaults to all")
     .action(async (workflow) => {
+      if (await refuses()) {
+        return;
+      }
       context.setExitCode(await docs(workflow, context));
     });
 

@@ -33,6 +33,52 @@ describe("init", () => {
     rmSync(cwd, { force: true, recursive: true });
   });
 
+  it("trusts the project that it creates", async () => {
+    const added: string[] = [];
+
+    await expect(
+      init({
+        cwd,
+        trustStore: { add: (root) => added.push(root), has: () => false },
+        ...createOutput(),
+      }),
+    ).resolves.toBe(0);
+
+    expect(added).toEqual([cwd]);
+  });
+
+  it("creates the project and warns when it cannot record the trust", async () => {
+    const output = createOutput();
+    const trustStore = {
+      add: () => {
+        throw new Error("The disk is full");
+      },
+      has: () => false,
+    };
+
+    await expect(init({ cwd, trustStore, ...output })).resolves.toBe(0);
+
+    expect(existsSync(join(cwd, ".ugoke", "config.yaml"))).toBe(true);
+    expect(output.written.stderr).toBe(
+      "ugoke: could not record that the project is trusted, so the next command asks: The disk is full\n",
+    );
+  });
+
+  it("records no trust when it fails", async () => {
+    mkdirSync(join(cwd, ".ugoke"));
+    const added: string[] = [];
+
+    await expect(
+      init({
+        cwd,
+        trustStore: { add: (root) => added.push(root), has: () => false },
+        ...createOutput(),
+      }),
+    ).resolves.toBe(1);
+
+    expect(added).toEqual([]);
+  });
+
   it("creates a project with a sample workflow and its JSON Schemas", async () => {
     const output = createOutput();
 
