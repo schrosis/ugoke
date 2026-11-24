@@ -88,7 +88,9 @@ const isProject = (root: string): boolean => existsSync(join(root, ugokeDirector
 
 /** Says when a Worker is started again, to end a line of the log. */
 const again = (delayMs: number | undefined): string =>
-  delayMs === undefined ? "" : `. Trying again in ${delayMs / 1000} seconds`;
+  delayMs === undefined
+    ? ""
+    : `. Trying again in ${delayMs / 1000} ${delayMs === 1000 ? "second" : "seconds"}`;
 
 /** A Worker of a project on a server, and the plugin packages that it loaded. */
 interface ServedWorker {
@@ -176,9 +178,18 @@ export const createProjectWorkers = ({
         eventLog: createFileEventLog({ directory: projectLogDirectory(root) }),
         log: (message) => log(`${root}: ${message}`),
         onError: (error) => {
+          // Only the Worker that serves the project now is started again. One on a server that
+          // the project named before, and one that stops because the plugins changed, is not,
+          // as it is not when the resident process restarts.
+          const serves =
+            servers.get(root) === serverAddress &&
+            workers.get(root)?.get(serverAddress)?.worker === worker;
           forget(root, serverAddress, worker);
+          const message = error instanceof Error ? error.message : String(error);
           log(
-            `Worker of ${root} failed: ${error instanceof Error ? error.message : String(error)}${again(retryLater(root))}`,
+            serves
+              ? `Worker of ${root} failed: ${message}${again(retryLater(root))}`
+              : `Worker of ${root} at ${serverAddress} failed: ${message}. It is not started again, because the project does not use it now`,
           );
         },
         plugins: registry,

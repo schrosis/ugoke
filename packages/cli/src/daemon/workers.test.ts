@@ -298,6 +298,51 @@ describe("createProjectWorkers", () => {
     expect(stopped.toSorted()).toEqual(["127.0.0.1:7233", "temporal.example.com:7233"]);
   });
 
+  it("does not start the Worker on a previous server again after it failed", async () => {
+    const workers = create(succeed);
+    await workers.add(project);
+    writeFileSync(
+      join(project, ".ugoke", "config.yaml"),
+      "temporal:\n  address: temporal.example.com:7233\n",
+    );
+    await workers.add(project);
+
+    started[0]?.onError?.(new Error("connection lost"));
+
+    expect(lines).toContain(
+      `Worker of ${project} at 127.0.0.1:7233 failed: connection lost. It is not started again, because the project does not use it now`,
+    );
+    // Longer than the first wait.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(started).toHaveLength(2);
+    expect(workers.list()).toEqual([
+      expect.not.objectContaining({ previousAddresses: expect.anything() }),
+    ]);
+    expect(workers.list()).toMatchObject([{ address: "temporal.example.com:7233", running: true }]);
+    await workers.stopAll();
+  });
+
+  it("does not start a Worker again after the one that stops for new plugins failed", async () => {
+    const workers = create(succeed);
+    await workers.add(project);
+    // ugoke has this plugin built in, so adding it changes the list without loading a package.
+    writeFileSync(
+      join(project, ".ugoke", "config.yaml"),
+      'plugins:\n  "@ugoke/adapter-ai-claude-code":\n',
+    );
+    await workers.add(project);
+    const count = started.length;
+    expect(count).toBe(2);
+
+    started[0]?.onError?.(new Error("connection lost"));
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(started).toHaveLength(count);
+    expect(workers.list()).toMatchObject([{ running: true }]);
+    expect(lines.filter((line) => line.includes("Trying again"))).toEqual([]);
+    await workers.stopAll();
+  });
+
   it("uses the Worker on a server again when the project names it again", async () => {
     const workers = create(succeed);
     const config = join(project, ".ugoke", "config.yaml");

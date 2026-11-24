@@ -43,6 +43,9 @@ fsl 5
 //                resident process starts, it answers before the Workers of the projects that it
 //                kept run, and starts them at once, so restore and register stand for a start
 //                that the commands do not wait for.
+//                Only the Worker on the server that the project names now is started again.
+//                One on a previous server, and one that stops after replug, is not, as it is not
+//                when the resident process restarts. lose stands for the Worker that serves now.
 requirements DaemonProjects {
   actor User, Daemon
 
