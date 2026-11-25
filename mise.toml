@@ -1,7 +1,7 @@
 [tools]
 "aqua:temporalio/cli" = "1.10.1"
 node = "26.13.1"
-pnpm = "12.22.0"
+pnpm = "12.23.0"
 
 [tools."github:ymm-oss/fsl"]
 version = "v5.2.0"
