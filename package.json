@@ -21,7 +21,7 @@
     "@types/node": "catalog:",
     "@ugoke/adapter-wait-github": "workspace:*",
     "lefthook": "^2.2.2",
-    "oxfmt": "0.79.0",
+    "oxfmt": "0.80.0",
     "oxlint": "^1.90.0",
     "oxlint-tsgolint": "^7.0.2005",
     "typescript": "^7.0.2",
